@@ -1,0 +1,47 @@
+import { Inter } from "next/font/google";
+import { GoogleAnalytics } from "@next/third-parties/google";
+import "@/styles/material-symbols.css";
+import "./globals.css";
+import { ThemeProvider } from "@/shared/components/ThemeProvider";
+import "@/lib/network/initOutboundProxy"; // Auto-initialize outbound proxy env
+import "@/shared/services/bootstrap"; // Auto-run initializeApp (watchdog, auto-resume tunnel)
+import { initConsoleLogCapture } from "@/lib/consoleLogBuffer";
+import { RuntimeI18nProvider } from "@/i18n/RuntimeI18nProvider";
+
+// Hook console immediately at module load time (server-side only, runs once)
+initConsoleLogCapture();
+
+const inter = Inter({
+  subsets: ["latin"],
+  variable: "--font-inter",
+});
+
+export const metadata = {
+  title: "ORouter - AI Infrastructure Management",
+  description: "One endpoint for all your AI providers. Manage keys, monitor usage, and scale effortlessly.",
+  icons: {
+    icon: "/favicon.svg",
+  },
+};
+
+export const viewport = {
+  themeColor: "#0a0a0a",
+};
+
+export default function RootLayout({ children }) {
+  const googleAnalyticsId = process.env.NEXT_PUBLIC_GOOGLE_ANALYTICS_ID;
+
+  return (
+    <html lang="en" suppressHydrationWarning>
+      <head />
+      <body className={`${inter.variable} font-sans antialiased`}>
+        <ThemeProvider>
+          <RuntimeI18nProvider>
+            {children}
+          </RuntimeI18nProvider>
+        </ThemeProvider>
+        {googleAnalyticsId && <GoogleAnalytics gaId={googleAnalyticsId} />}
+      </body>
+    </html>
+  );
+}

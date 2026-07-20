@@ -1,0 +1,73 @@
+{
+  "name": "orouter-app",
+  "version": "0.5.35",
+  "description": "ORouter web dashboard",
+  "private": true,
+  "scripts": {
+    "dev": "bun --bun next dev --webpack --port 20127",
+    "build": "bun --bun next build --webpack",
+    "start": "bun ./.next/standalone/server.js",
+    "dev:backend": "cd backend && go run ./cmd/server",
+    "dev:node-upstream": "PORT=20129 bun --bun next dev --webpack --port 20129",
+    "dev:all": "bun scripts/dev-all.js",
+    "build:backend": "cd backend && go build -o ../bin/9router-backend ./cmd/server",
+    "test:backend": "cd backend && go test ./...",
+    "gen:models-snapshot": "bun scripts/gen-models-snapshot.mjs",
+    "verify:models-parity": "bun scripts/verify-models-parity.mjs",
+    "cli:pack": "bun run --cwd cli pack:cli",
+    "cli:publish": "bun run --cwd cli publish:cli",
+    "prod:local": "bash scripts/prod-local.sh",
+    "doctor:macos": "bash scripts/doctor-macos.sh",
+    "build:icons": "python3 scripts/build-material-symbols-subset.py"
+  },
+  "dependencies": {
+    "@dnd-kit/core": "^6.3.1",
+    "@dnd-kit/modifiers": "^9.0.0",
+    "@dnd-kit/sortable": "^10.0.0",
+    "@dnd-kit/utilities": "^3.2.2",
+    "@monaco-editor/react": "^4.7.0",
+    "@next/third-parties": "^16.2.9",
+    "@xyflow/react": "^12.10.1",
+    "bcryptjs": "^3.0.3",
+    "confbox": "^0.2.4",
+    "express": "^5.2.1",
+    "http-proxy-middleware": "^3.0.5",
+    "jose": "^6.1.3",
+    "marked": "^18.0.1",
+    "material-symbols": "^0.44.6",
+    "monaco-editor": "^0.55.1",
+    "next": "^16.1.6",
+    "node-forge": "^1.3.3",
+    "node-machine-id": "^1.1.12",
+    "open": "^11.0.0",
+    "ora": "^9.1.0",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "react-is": "^16.13.1",
+    "recharts": "^3.7.0",
+    "selfsigned": "^5.5.0",
+    "socks-proxy-agent": "^8.0.5",
+    "sql.js": "^1.14.1",
+    "undici": "^7.19.2",
+    "uuid": "^13.0.0",
+    "zustand": "^5.0.10"
+  },
+  "optionalDependencies": {
+    "better-sqlite3": "^12.6.2"
+  },
+  "comment_better_sqlite3": "kept in optionalDependencies so bun install doesn't fail on systems without build tools — sql.js is used as fallback at runtime",
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.1.18",
+    "eslint": "^9",
+    "eslint-config-next": "16.1.6",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^4"
+  },
+  "trustedDependencies": [
+    "better-sqlite3"
+  ],
+  "packageManager": "bun@1.3.10",
+  "engines": {
+    "bun": ">=1.3.0"
+  }
+}
