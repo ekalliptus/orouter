@@ -301,6 +301,7 @@ export async function POST(request) {
         case "minimax":
         case "minimax-cn":
         case "alicode-intl":
+        case "alims-intl":
         case "alicode":
         case "agentrouter": {
           // Use baseUrl from PROVIDERS (DRY); separate openai-format vs claude-format flow.
@@ -308,7 +309,7 @@ export async function POST(request) {
           // validate via the OpenAI branch, NOT the Claude x-api-key branch it was previously
           // grouped into (which would have probed with the wrong auth scheme and always failed).
           const cfg = PROVIDERS[provider];
-          const isOpenAiFormat = provider === "glm-cn" || provider === "alicode" || provider === "alicode-intl" || provider === "agentrouter";
+          const isOpenAiFormat = provider === "glm-cn" || provider === "alicode" || provider === "alicode-intl" || provider === "alims-intl" || provider === "agentrouter";
 
           if (isOpenAiFormat) {
             const testModel = getDefaultModel(provider);
