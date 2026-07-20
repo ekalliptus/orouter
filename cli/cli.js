@@ -644,7 +644,7 @@ async function startServer(updatePromise) {
   }
 
   function spawnNodeServer() {
-    const child = spawn(RUNTIME, ["--max-old-space-size=6144", serverPath], {
+    const child = spawn(RUNTIME, ["--dns-result-order=ipv4first", "--max-old-space-size=6144", serverPath], {
       cwd: standaloneDir,
       stdio: showLog ? "inherit" : ["ignore", "ignore", "pipe"],
       detached: true,
