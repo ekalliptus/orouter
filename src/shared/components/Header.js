@@ -228,7 +228,7 @@ export default function Header({ onMenuClick, showMenuButton = true }) {
   };
 
   return (
-    <header className="aurora-glass z-20 m-2 mb-0 flex shrink-0 items-center justify-between gap-3 rounded-[16px] px-4 py-3 lg:mx-4 lg:mt-4 lg:px-6">
+    <header className="aurora-glass-solid z-20 m-2 mb-0 flex shrink-0 items-center justify-between gap-3 rounded-[16px] px-4 py-3 lg:mx-4 lg:mt-4 lg:px-6">
       {/* Mobile menu button */}
       <div className="flex items-center gap-3 lg:hidden shrink-0">
         {showMenuButton && (

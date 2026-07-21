@@ -307,6 +307,14 @@ input, textarea {
   backdrop-filter: blur(26px) saturate(130%);
 }
 
+/* Opaque variant for always-visible surfaces (e.g. sticky header) to avoid
+   full-viewport recompositing while content scrolls. Keeps the glass colors. */
+.aurora-glass-solid {
+  background: linear-gradient(145deg, var(--glass-highlight), transparent 38%), var(--glass-bg-strong);
+  border: 1px solid var(--glass-border);
+  box-shadow: inset 0 1px var(--glass-highlight), var(--shadow-glass);
+}
+
 .console-label {
   color: var(--color-text-muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
