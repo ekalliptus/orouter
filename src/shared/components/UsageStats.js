@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef, memo } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { FREE_PROVIDERS, AI_PROVIDERS } from "@/shared/constants/providers";
+import useProviderStore from "@/store/providerStore";
 
 // Keep providers without serviceKinds (default LLM) or with "llm" in serviceKinds
 function isLLMProvider(id) {
@@ -16,6 +17,10 @@ import { Skeleton } from "./Loading";
 import OverviewCards from "@/app/(dashboard)/dashboard/usage/components/OverviewCards";
 import UsageTable, { fmt, fmtTime } from "@/app/(dashboard)/dashboard/usage/components/UsageTable";
 import dynamic from "next/dynamic";
+
+// Stable empty list so memoized children don't see a new array reference each render.
+const EMPTY_LIST = [];
+
 // Lazy-load chart libraries behind geometry-preserving fallbacks.
 const ProviderTopology = dynamic(() => import("@/app/(dashboard)/dashboard/usage/components/ProviderTopology"), {
   ssr: false,
@@ -25,27 +30,26 @@ const UsageChart = dynamic(() => import("@/app/(dashboard)/dashboard/usage/compo
   loading: () => <Skeleton className="h-[270px] w-full" />,
 });
 
-function timeAgo(timestamp) {
-  const diff = Math.floor((Date.now() - new Date(timestamp)) / 1000);
+function timeAgo(timestamp, now = Date.now()) {
+  const diff = Math.floor((now - new Date(timestamp)) / 1000);
   if (diff < 60) return `${diff}s ago`;
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
   return `${Math.floor(diff / 86400)}d ago`;
 }
 
-// Auto-update time display every second without re-rendering parent
-function TimeAgo({ timestamp }) {
-  const [, setTick] = useState(0);
-  
+// One parent clock drives every row label, replacing N per-row timers.
+function useClock(intervalMs = 1000) {
+  const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    const timer = setInterval(() => setTick(t => t + 1), 1000);
+    const timer = setInterval(() => setNow(Date.now()), intervalMs);
     return () => clearInterval(timer);
-  }, []);
-  
-  return <>{timeAgo(timestamp)}</>;
+  }, [intervalMs]);
+  return now;
 }
 
-function RecentRequests({ requests = [] }) {
+const RecentRequests = memo(function RecentRequests({ requests = [] }) {
+  const now = useClock();
   return (
     <Card className="flex min-w-0 flex-col overflow-hidden" padding="sm" style={{ height: 480 }}>
       {/* Header */}
@@ -80,7 +84,7 @@ function RecentRequests({ requests = [] }) {
                       {" "}
                       <span className="text-success">{fmt(r.completionTokens)}↓</span>
                     </td>
-                    <td className="py-1.5 text-right text-text-muted whitespace-nowrap"><TimeAgo timestamp={r.timestamp} /></td>
+                    <td className="py-1.5 text-right text-text-muted whitespace-nowrap">{timeAgo(r.timestamp, now)}</td>
                   </tr>
                 );
               })}
@@ -90,7 +94,7 @@ function RecentRequests({ requests = [] }) {
       )}
     </Card>
   );
-}
+});
 
 function sortData(dataMap, pendingMap = {}, sortBy, sortOrder) {
   return Object.entries(dataMap || {})
@@ -226,39 +230,44 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
   const setPeriod = setPeriodProp ?? setPeriodLocal;
 
   // Fetch connected providers once, deduplicate by provider type
-  // Always include noAuth free providers (e.g. opencode) regardless of connections
+  // Always include noAuth free providers (e.g. opencode) regardless of connections.
+  // Uses the shared provider store so Usage + Providers share one request within TTL.
   useEffect(() => {
+    let cancelled = false;
     Promise.all([
-      fetch("/api/providers").then((r) => r.ok ? r.json() : null),
-      fetch("/api/provider-nodes").then((r) => r.ok ? r.json() : null),
+      useProviderStore.getState().fetchProviders(),
+      useProviderStore.getState().fetchProviderNodes(),
     ])
-      .then(([d, nodesData]) => {
+      .then(([connections, nodes]) => {
+        if (cancelled) return;
         // Build node name lookup for custom providers
         const nodeNameMap = {};
-        for (const node of (nodesData?.nodes || [])) {
+        for (const node of (Array.isArray(nodes) ? nodes : nodes?.nodes || [])) {
           nodeNameMap[node.id] = node.name;
         }
         const seen = new Set();
-        const unique = (d?.connections || []).filter((c) => {
-          if (c.isActive === false) return false;
-          if (!isLLMProvider(c.provider)) return false;
-          if (seen.has(c.provider)) return false;
+        const unique = [];
+        for (const c of connections || []) {
+          if (c.isActive === false) continue;
+          if (!isLLMProvider(c.provider)) continue;
+          if (seen.has(c.provider)) continue;
           seen.add(c.provider);
-          return true;
-        }).map((c) => ({
-          ...c,
-          nodeName: nodeNameMap[c.provider] || null,
-        }));
+          unique.push({ ...c, nodeName: nodeNameMap[c.provider] || null });
+        }
         const noAuthProviders = Object.values(FREE_PROVIDERS)
           .filter((p) => p.noAuth && !seen.has(p.id) && isLLMProvider(p.id))
           .map((p) => ({ provider: p.id, name: p.name }));
         setProviders([...unique, ...noAuthProviders]);
       })
       .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Fetch filtered stats via REST when period changes
   useEffect(() => {
+    const controller = new AbortController();
     // First load: show full spinner; subsequent: show subtle fetching indicator
     if (isInitialLoad.current) {
       isInitialLoad.current = false;
@@ -267,21 +276,29 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
       setFetching(true);
     }
 
-    fetch(`/api/usage/stats?period=${period}`)
+    fetch(`/api/usage/stats?period=${period}`, { signal: controller.signal })
       .then((r) => r.ok ? r.json() : null)
       .then((data) => {
+        if (controller.signal.aborted) return;
         if (data) {
           hasLoadedStats.current = true;
           setStats((prev) => ({ ...prev, ...data }));
         }
       })
-      .catch(() => {})
+      .catch((err) => {
+        if (controller.signal.aborted || err?.name === "AbortError") return;
+      })
       .finally(() => {
+        if (controller.signal.aborted) return;
         setLoading(false);
         setFetching(false);
       });
+    return () => controller.abort();
   }, [period]);
 
+  // SSE connection - real-time updates for activeRequests + recentRequests only.
+  // A compact signature avoids committing when a heartbeat resends identical content.
+  const lastSignatureRef = useRef("");
   // SSE connection - real-time updates for activeRequests + recentRequests only
   useEffect(() => {
     const es = new EventSource("/api/usage/stream");
@@ -289,6 +306,14 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
     es.onmessage = (e) => {
       try {
         const data = JSON.parse(e.data);
+        const signature = [
+          JSON.stringify(data.activeRequests ?? null),
+          JSON.stringify(data.recentRequests ?? null),
+          JSON.stringify(data.errorProvider ?? null),
+          String(data.pending ?? ""),
+        ].join("|");
+        if (signature === lastSignatureRef.current) return;
+        lastSignatureRef.current = signature;
         // Always merge only real-time fields, never overwrite full stats from REST
         setStats((prev) => {
           if (!prev) return prev;
@@ -490,11 +515,11 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
         <div className="grid min-w-0 grid-cols-1 items-stretch gap-2 lg:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)]">
           <ProviderTopology
             providers={providers}
-            activeRequests={stats.activeRequests || []}
+            activeRequests={stats.activeRequests || EMPTY_LIST}
             lastProvider={stats.recentRequests?.[0]?.provider || ""}
             errorProvider={stats.errorProvider || ""}
           />
-          <RecentRequests requests={stats.recentRequests || []} />
+          <RecentRequests requests={stats.recentRequests || EMPTY_LIST} />
         </div>
       )}
 
