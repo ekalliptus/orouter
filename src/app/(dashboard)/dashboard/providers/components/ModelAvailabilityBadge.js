@@ -10,6 +10,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Button } from "@/shared/components";
 import { useNotificationStore } from "@/store/notificationStore";
+import { useVisibilityAwarePolling } from "@/shared/hooks/useVisibilityAwarePolling";
 
 const STATUS_CONFIG = {
   available: { icon: "check_circle", color: "#22c55e", label: "Available" },
@@ -42,9 +43,11 @@ export default function ModelAvailabilityBadge() {
 
   useEffect(() => {
     fetchStatus();
-    const interval = setInterval(fetchStatus, 30000);
-    return () => clearInterval(interval);
   }, [fetchStatus]);
+
+  // Availability rarely changes — pause polling entirely while the tab is hidden
+  // so a backgrounded dashboard stops hitting /api/models/availability every 30s.
+  useVisibilityAwarePolling(fetchStatus, 30000);
 
   // Close popover on outside click
   useEffect(() => {

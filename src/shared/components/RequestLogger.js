@@ -1,41 +1,49 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import Card from "./Card";
+import { useVisibilityAwarePolling } from "@/shared/hooks/useVisibilityAwarePolling";
+
+// Poll cadence for request logs. 3s felt "live" but re-fetched the full table on
+// every tick; 5s halves the network + re-render cost while still feeling real-time.
+const LOG_POLL_INTERVAL_MS = 5000;
 
 export default function RequestLogger() {
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [autoRefresh, setAutoRefresh] = useState(true);
+  // Skip re-render when the payload is unchanged (no new logs since last fetch).
+  // Mirrors the SSE signature dedup in UsageStats — avoids a table re-render every
+  // 5s even when nothing changed, which is the common case on an idle dashboard.
+  const lastSignatureRef = useRef("");
 
-  useEffect(() => {
-    fetchLogs();
-  }, []);
-
-  useEffect(() => {
-    let interval;
-    if (autoRefresh) {
-      interval = setInterval(() => {
-        fetchLogs(false);
-      }, 3000);
-    }
-    return () => clearInterval(interval);
-  }, [autoRefresh]);
-
-  const fetchLogs = async (showLoading = true) => {
+  const fetchLogs = useCallback(async (showLoading = true) => {
     if (showLoading) setLoading(true);
     try {
       const res = await fetch("/api/usage/request-logs");
       if (res.ok) {
         const data = await res.json();
-        setLogs(data);
+        const signature = JSON.stringify(data);
+        if (signature !== lastSignatureRef.current) {
+          lastSignatureRef.current = signature;
+          setLogs(data);
+        }
       }
     } catch (error) {
       console.error("Failed to fetch logs:", error);
     } finally {
       if (showLoading) setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    fetchLogs();
+  }, [fetchLogs]);
+
+  // Pauses while the tab is hidden: no fetches, no re-renders, no main-thread
+  // contention when the user is in another window. Ticks once immediately on
+  // regaining focus so stale logs refresh at once.
+  useVisibilityAwarePolling(() => fetchLogs(false), LOG_POLL_INTERVAL_MS, autoRefresh);
 
   return (
     <div className="flex flex-col gap-4">
@@ -43,7 +51,7 @@ export default function RequestLogger() {
         <h2 className="text-xl font-semibold">Request Logs</h2>
         <div className="flex items-center gap-2">
           <label className="text-sm font-medium text-text-muted flex items-center gap-2 cursor-pointer">
-            <span>Auto Refresh (3s)</span>
+            <span>Auto Refresh (5s)</span>
             <div
               onClick={() => setAutoRefresh(!autoRefresh)}
               className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${autoRefresh ? "bg-primary" : "bg-bg-subtle border border-border"

@@ -38,12 +38,37 @@ function timeAgo(timestamp, now = Date.now()) {
   return `${Math.floor(diff / 86400)}d ago`;
 }
 
-// One parent clock drives every row label, replacing N per-row timers.
+// One parent clock drives every row label, replacing N per-row timers. It also
+// freezes while the tab is hidden: "x seconds ago" labels only matter when the
+// user can see them, and a backgrounded dashboard shouldn't burn a re-render/sec.
 function useClock(intervalMs = 1000) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), intervalMs);
-    return () => clearInterval(timer);
+    if (typeof document === "undefined") return undefined;
+    let timer = null;
+    const start = () => {
+      if (timer == null) {
+        // Refresh immediately on focus so labels aren't stale after returning.
+        setNow(Date.now());
+        timer = setInterval(() => setNow(Date.now()), intervalMs);
+      }
+    };
+    const stop = () => {
+      if (timer != null) {
+        clearInterval(timer);
+        timer = null;
+      }
+    };
+    const onVisibility = () => {
+      if (document.hidden) stop();
+      else start();
+    };
+    if (!document.hidden) start();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      stop();
+    };
   }, [intervalMs]);
   return now;
 }
