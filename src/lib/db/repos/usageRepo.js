@@ -26,6 +26,13 @@ if (!global._pendingTimerRefs) global._pendingTimerRefs = {};
 if (!global._recentRing) global._recentRing = { items: [], initialized: false };
 if (!global._connectionMapCache) global._connectionMapCache = { map: {}, ts: 0 };
 if (!global._statsEmitTimers) global._statsEmitTimers = { pending: null, update: null };
+// Prune gate: run usageHistory retention at most once per PRUNE_INTERVAL_MS, regardless of how
+// many requests complete concurrently. Avoids a DELETE storm on a busy process.
+if (!global._usageLastPruneTs) global._usageLastPruneTs = 0;
+// getUsageStats cache: under concurrent load every finished request (debounced) + every SSE
+// listener triggers a full getUsageStats() (heavy scan + sync aggregation). Coalesce them into
+// one compute per STATS_TTL_MS so the Node event loop isn't choked while streaming AI tokens.
+if (!global._statsResultCache) global._statsResultCache = { data: null, ts: 0, period: null };
 
 const pendingRequests = global._pendingRequests;
 const lastErrorProvider = global._lastErrorProvider;
@@ -34,6 +41,16 @@ const pendingTimerRefs = global._pendingTimerRefs;
 const recentRing = global._recentRing;
 const connCache = global._connectionMapCache;
 const statsEmitTimers = global._statsEmitTimers;
+const usageLastPruneTs = global._usageLastPruneTs;
+const statsResultCache = global._statsResultCache;
+
+const PRUNE_INTERVAL_MS = 60 * 60 * 1000; // prune usageHistory at most once per hour
+// Stats compute is the heaviest path on the hot request loop. TTL coalesces concurrent listeners
+// (N open dashboard tabs + every finished request) into a single compute per window. Overridable
+// via env: set NINEROUTER_STATS_TTL_MS=0 (or low) to force near-real-time full stats. Note the
+// nullish coalescing: "0" must be honored (disable cache), not collapsed to the default — `||`
+// treats 0 as falsy and would silently re-enable the 2s cache a user explicitly turned off.
+const STATS_TTL_MS = Math.max(0, Number(process.env.NINEROUTER_STATS_TTL_MS ?? 2000));
 
 export const statsEmitter = global._statsEmitter;
 
@@ -317,11 +334,34 @@ export async function saveRequestUsage(entry) {
       const next = (cur ? parseInt(cur.value, 10) : 0) + 1;
       db.run(`INSERT INTO _meta(key, value) VALUES('totalRequestsLifetime', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, [String(next)]);
       inserted = true;
+
+      // Gate retention so we don't DELETE on every request. Same transaction = one round-trip,
+      // and idx_uh_ts makes the range delete cheap. usageDaily rollups are NOT pruned, so totals
+      // (getUsageStats daily-summary path) stay accurate; only per-request detail ages out.
+      const nowMs = Date.now();
+      if (nowMs - usageLastPruneTs >= PRUNE_INTERVAL_MS) {
+        global._usageLastPruneTs = nowMs;
+        try {
+          let retentionDays = 30;
+          const sRow = db.get(`SELECT data FROM settings WHERE id = 1`);
+          if (sRow) {
+            const s = parseJson(sRow.data, {});
+            if (typeof s.usageHistoryRetentionDays === "number") retentionDays = s.usageHistoryRetentionDays;
+          }
+          if (retentionDays > 0) {
+            const cutoff = new Date(nowMs - retentionDays * 86400000).toISOString();
+            db.run(`DELETE FROM usageHistory WHERE timestamp < ?`, [cutoff]);
+          }
+        } catch {} // retention is best-effort; never fail a usage write because of it
+      }
     });
 
     if (inserted) {
       pushToRing(entry);
-      scheduleStatsEvent("update", 250);
+      // Full getUsageStats() is heavy (scan + sync aggregation). Debounce so it runs at most ~once
+      // per 2s instead of once per finished request. "pending" (active request indicator) stays
+      // at its faster 150ms debounce above.
+      scheduleStatsEvent("update", 2000);
     }
   } catch (e) {
     console.error("Failed to save usage stats:", e);
@@ -360,6 +400,16 @@ function loadDaysInRange(adapter, maxDays) {
 
 export async function getUsageStats(period = "all") {
   const db = await getAdapter();
+
+  // Coalesce concurrent callers: under load, every finished request (debounced) AND every SSE
+  // listener fans out into a getUsageStats() call. The same-period result rarely changes within
+  // a couple seconds, so serve from cache and skip the heavy scan + sync aggregation. The SSE
+  // stream layer overlays fresh activeRequests/recentRequests on top, so pending indicators stay
+  // live; only the aggregate totals are briefly deferred. Clone so callers can't mutate the cache.
+  if (STATS_TTL_MS > 0 && statsResultCache.data && statsResultCache.period === period
+      && Date.now() - statsResultCache.ts < STATS_TTL_MS) {
+    return structuredClone(statsResultCache.data);
+  }
 
   const [{ getProviderConnections }, { getApiKeys }, { getProviderNodes }] = await Promise.all([
     import("./connectionsRepo.js"),
@@ -670,6 +720,14 @@ export async function getUsageStats(period = "all") {
   }
 
   stats.totalRequests = Object.values(stats.byProvider).reduce((sum, p) => sum + (p.requests || 0), 0);
+
+  // Populate cache after a successful compute. Clone stored so the cached object is independent
+  // from the instance returned below (callers may read/mutate their copy freely).
+  if (STATS_TTL_MS > 0) {
+    statsResultCache.data = structuredClone(stats);
+    statsResultCache.ts = Date.now();
+    statsResultCache.period = period;
+  }
   return stats;
 }
 

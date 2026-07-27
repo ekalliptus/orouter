@@ -65,6 +65,18 @@ async function initAdapter() {
 
   if (!state.logged) {
     console.log(`[DB] Driver: ${adapter.driver} | file: ${DATA_FILE}`);
+    // sql.js is a pure-WASM SQLite that serializes the ENTIRE database to disk on every write
+    // (debounced 100ms). Under concurrent load this saturates the event loop and makes the whole
+    // process — including AI proxy streaming and the dashboard — crawl. better-sqlite3 (native,
+    // WAL, incremental) or node:sqlite (≥22.5) are dramatically faster. Surface this once so a
+    // bad install (failed native build → silent sql.js fallback) isn't misdiagnosed as app lag.
+    if (adapter.driver === "sql.js") {
+      console.warn(
+        `[DB] WARNING: using sql.js (WASM) — slow under concurrent writes. ` +
+          `For better performance use Docker (compiles better-sqlite3), or run on Node >=22.5 ` +
+          `(node:sqlite) / Bun (bun:sqlite). See .env.example for driver order.`
+      );
+    }
     state.logged = true;
   }
 

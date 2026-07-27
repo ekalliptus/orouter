@@ -34,6 +34,10 @@ const DEFAULT_SETTINGS = {
   observabilityBatchSize: 20,
   observabilityFlushIntervalMs: 5000,
   observabilityMaxJsonSize: 5,
+  // Prune usageHistory rows older than N days (0 = keep forever). Keeps the hot-path stats
+  // query (getUsageStats) fast under concurrent load — daily rollups (usageDaily) are NOT pruned,
+  // so totals stay accurate; only per-request detail beyond this window is dropped.
+  usageHistoryRetentionDays: 30,
   outboundProxyEnabled: false,
   outboundProxyUrl: "",
   outboundNoProxy: "",
