@@ -12,6 +12,7 @@ import useSettingsStore from "@/store/settingsStore";
 import Button from "./Button";
 import { ConfirmModal } from "./Modal";
 import NineRemotePromoModal from "./NineRemotePromoModal";
+import Logo from "./Logo";
 
 // const VISIBLE_MEDIA_KINDS = ["embedding", "image", "imageToText", "tts", "stt", "webSearch", "webFetch", "video", "music"];
 const VISIBLE_MEDIA_KINDS = ["embedding", "image", "video", "tts", "stt"];
@@ -120,11 +121,9 @@ export default function Sidebar({ onClose }) {
         {/* Logo */}
         <div className="px-6 py-4 flex flex-col gap-2">
           <Link href="/dashboard" prefetch={false} className="flex items-center gap-3">
-            <div className="flex items-center justify-center size-9 rounded-[10px] bg-gradient-to-br from-brand-500 to-brand-700 shadow-[var(--shadow-warm)]">
-              <span className="material-symbols-outlined text-white text-[20px]">hub</span>
-            </div>
+            <Logo size={36} />
             <div className="flex flex-col">
-              <h1 className="text-lg font-semibold tracking-tight text-text-main">ORouter</h1>
+              <h1 className="text-lg font-extrabold tracking-tight text-text-main uppercase">ORouter</h1>
               <span className="console-label text-emerald-600 dark:text-emerald-400">Control Plane · Online</span>
               <span className="text-[10px] text-text-muted">v{APP_CONFIG.version}</span>
             </div>

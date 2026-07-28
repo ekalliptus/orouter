@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import Logo from "@/shared/components/Logo";
 
 export default function Navigation() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -16,10 +17,8 @@ export default function Navigation() {
           onClick={() => router.push("/")}
           aria-label="Navigate to home"
         >
-          <div className="size-8 rounded bg-linear-to-br from-[#f97815] to-orange-700 flex items-center justify-center text-white">
-            <span className="material-symbols-outlined text-[20px]">hub</span>
-          </div>
-          <h2 className="text-white text-xl font-bold tracking-tight">ORouter</h2>
+          <Logo size={32} />
+          <h2 className="text-white text-xl font-extrabold tracking-tight uppercase">ORouter</h2>
         </button>
 
         {/* Desktop menu */}

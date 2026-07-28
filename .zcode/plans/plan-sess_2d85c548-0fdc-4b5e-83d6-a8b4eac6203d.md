@@ -1,52 +1,52 @@
-# Plan: Fix dashboard "kurang smooth" — polling & main-thread contention
+# Plan: Redesign Neobrutalism (global theme + logo) — tanpa rusak fitur
 
-## Root cause (audit membuktikan, bukan tebak)
+## Tujuan (dari keputusan lo)
+Neobrutalism beneran: corner tajam dimana-mana, border tebal hitam, shadow kotak keras, warna flat kontras, favicon "O" neobrutal, logo in-app diupdate konsisten.
 
-Gejala lo (scroll stutter, click/input delay, data update nge-lag) = **main thread contention**, BUKAN bundle JS (semua heavy dep sudah lazy) dan BUKAN list rendering (semua list sudah dibatesin/paginate). Penyebabnya: **client polling numpuk & gak respect tab visibility**. Audit nemuin:
+## Bukti arsitektur (audit membuktikan bisa dilakukan aman)
+Repo lo pakai **Tailwind v4 CSS-first**, semua warna lewat CSS custom properties di `globals.css` (`:root` light + `.dark` dark), di-map ke utility via `@theme inline` (globals.css:173-236). Override token otomatis mengalir ke `bg-primary`, `bg-surface`, `text-text`, `border-border`, dll (dipakai ratusan kali). Untuk ciri neobrutal yang GAK lewat token (corner radius 563 `rounded-*`, border width 1px), gue pakai **global CSS rules** (element selector) — bukan menyapu 106 file (berisiko).
 
-- **`RequestLogger.js:18`** polling HTTP tiap **3 detik**, always-on walau tab hidden, refetch full table + re-render tiap tick. Worst offender.
-- **10 komponen gak ada `visibilitychange` guard** → polling terus jalan walau lo ganti tab ke lain (bikin VPS & browser sibuk percuma).
-- **Banyak clock 1Hz independen** (UsageStats, CooldownTimer per-row, ConnectionRow per-row) — gak fetch tapi trigger re-render. Harusnya 1 tick shared.
+## Perubahan (4 area, dipisah supaya bisa diuji/rollback)
 
-Bundle audit: Monaco/recharts/@xyflow/marked **sudah lazy** → bukan masalah. Skip code-splitting (sudah rapi).
+### Area 1 — Neobrutalism palette + shadow (globals.css `:root` + `.dark`)
+Override token warna jadi neobrutal: background krem/off-white (#F4EDE0), surface putih bersih, primary tetap oranye TAPI flat solid (bukan gradient), accent kontras tinggi (hitam tebal + kuning/cyan pop). Shadow tokens (`--shadow-soft/warm/elevated/elev`) → **hard offset shadow** neobrutal (mis. `4px 4px 0 #000`, no blur). Border token `--color-border` → hitam solid. Semua mengalir otomatis ke utility yg sudah dipakai.
+- Light: warm cream bg, hard black borders, flat accent.
+- Dark: deep charcoal, same hard black borders, flat accent.
 
-## Perubahan kode (3 area, low-risk, additive)
+### Area 2 — Global neobrutalist CSS rules (globals.css, blok baru)
+Ciri neobrutal yang GAK lewat token, diselesaikan via rules global (bukan menyapu file):
+- **Corner tajam**: zero radius default di surface/card/input/button/select, TAPI **preserve exceptions** — `rounded-full` Badge, Toggle switch, avatar, status pill tetap bulat (dikecualikan via `:where()` selector, supaya gak rusak elemen interaktif).
+- **Border tebal**: border default jadi `2px solid black` di surface/card/button, dengan class override (`rounded-full`, dll) tetap dihormati.
+- **Focus ring neobrutal**: global `:focus-visible` jadi thick black outline offset (bukan ring lembut).
+- `--radius-brand` → 0 (cards jadi tajam).
 
-### Fix 1 — Pause polling saat tab hidden (impact tertinggi)
-Bikin helper hook `useVisibilityAwarePolling` (atau minimal: guard existing intervals). Saat `document.hidden`, polling/clock pause otomatis; resume saat tab visible lagi. Diterapin di:
-- `src/shared/components/RequestLogger.js:18` (3s fetch — paling penting)
-- `src/app/(dashboard)/dashboard/providers/components/ModelAvailabilityBadge.js:45` (30s fetch)
-- `src/shared/components/UsageStats.js:45` useClock (1s re-render)
+### Area 3 — Favicon + PWA icon "O" neobrutal (file baru/replace)
+Bikin SVG baru: huruf "O" tebal, border hitam 3px, hard offset shadow, flat color. Beda dari "9" asli tapi similar vibe (letter-mark di kotak). File:
+- Replace `public/favicon.svg` (dipakai metadata + ProviderTopology:113)
+- Replace `public/icons/icon-192.svg`, `public/icons/icon-512.svg` (PWA manifest)
+- Replace `src/app/favicon.ico` (fallback, rasterize dari SVG baru)
+- Cek `manifest.js` theme_color match palette baru
 
-Effect: pas lo ganti tab/buka halaman lain, beban main thread drop drastis. Langsung ngaruh ke "klik/scroll smooth".
+### Area 4 — Logo in-app neobrutal (Sidebar + Landing Navigation)
+Update `Sidebar.js:120-131` dan `landing/components/Navigation.js:19-22`: ganti icon `hub` + gradient box → pakai SVG "O" baru (atau styled box neobrutal: border tebal, hard shadow, flat). Wordmark "ORouter" tetap (typography lebih chunky via font-weight). Konsisten dengan favicon.
 
-### Fix 2 — Lambatkan RequestLogger & jadikan on-demand
-- `RequestLogger.js:18`: 3s → **5s** (cukup buat "real-time feel", setengah beban).
-- Tambahan: skip refetch jika response identik (ETag/signature dedup, pola yg udah dipake di UsageStats SSE line 301). Hindari re-render kalo data gak berubah.
+## Catatan honest soal "agresif radius"
+Lo pilih agresif `border-radius:0` dimana-mana. Gue implementasikan dengan **exception list** (Toggle, Badge, avatar, status pill tetap bulat) supaya gak rusak UX. Lo akan lihat preview sebelum deploy — kalau ada elemen yg terlihat aneh jadi kotak, gue tweak exception list. Ini reversible (CSS doang).
 
-Effect: beban network + re-render berkurang 40-60% tanpa kehilangan feel real-time.
+## Yang TIDAK diubah (jaga fitur)
+- Material Symbols font (berisiko, gak perlu — neobrutal dicapai via CSS).
+- ProviderIcon.js (logo provider, beda sistem).
+- Semua logic/API/fitur.
+- `tailwind.config` (gak ada — Tailwind v4 css-first).
 
-### Fix 3 — Share 1 tick global buat clock 1Hz
-Saat ini: tiap CooldownTimer/ConnectionRow bikin `setInterval` sendiri. Kalau lo punya 10 row cooldown = 10 timer 1Hz = 10 re-render/detik. Bikin **1 global tick** (via Zustand store yg udah ada / context) yg semua komponen subscribe. 
-
-Files terkait: `CooldownTimer.js`, `ConnectionRow.js`, `UsageStats.js` useClock.
-
-Effect: dari N timer → 1 timer. Re-render coalesced.
-
-## Yang TIDAK saya ubah (sudah dipertimbangkan & ditolak via audit)
-- **Virtualisasi list** — audit buktiin semua list bounded (20-200 rows). Minim impact, sia-sia.
-- **Code-split Monaco/recharts** — udah lazy semua. Bukan masalah.
-- **Server-side** — udah gue fix kemarin (DB prune, headroom mati, cache TTL).
-
-## Risk & cara mitigasi
-- Semua perubahan **additive** (guard + dedup), gak ubah API/data.
-- `useVisibilityAwarePolling` pakai pola standar `visibilitychange` + cleanup di useEffect return.
-- Fix 2 (signature dedup) replikasi pola yg udah terbukti jalan di `UsageStats.js:301`.
+## Deliverable: preview dulu sebelum deploy
+Gue bikin perubahan di lokal, build lokal (Mac, RAM kuat), lalu kasih lo **screenshot/preview** vibe neobrutal-nya. Lo approve baru deploy ke VPS. Bukan langsung push ke production.
 
 ## Verifikasi
-- Build lokal (Mac, RAM kuat) → deploy ke VPS via cara yg sama kemarin (stop app → build → start). **ATAU** build lokal + scp kalo lo mau hindari downtime.
-- Manual: buka dashboard, scroll/navigate, ganti tab → verify smooth + polling pause (cek Network tab browser: request berhenti saat tab hidden).
-- Tidak ada test JS existing yg harus jalan (perubahan client-only).
+- Build lokal EXIT 0 (no compile error).
+- Visual: buka dashboard lokal → lihat palette/shadow/border neobrutal + favicon baru.
+- Deploy ke VPS (stop app → build → start) setelah lo approve preview.
+- Test: navigate dashboard, pastikan Toggle/Badge/avatar tetap normal (exception list jalan).
 
-## Catatan
-Plan ini fokus **client-side rendering perf** (yang lo rasain "kurang smooth"). Kalau setelah ini masih ada gejala, kemungkinan besar sisa-nya = latensi jaringan ke VPS lo (RTT ke region provider) — itu gak bisa di-fix dari kode, cuma infrastruktur (CDN/region).
+## Rujukan path opsi-2 (per-komponen) buat nanti
+Buat neobrutalism yg lebih halus per-komponen (mis. rounded-lg → rounded-none selectively), titik mulainya: 563 `rounded-*` di 106 file, 205 hardcoded hex. Itu bisa gue kerjakan terpisah kalau lo mau refine setelah lihat preview global.

@@ -27,129 +27,146 @@
 }
 
 /* ============================================================
-   9Router palette — adopted from 9remote_private/web
-   Brand orange (dark) / soft coral (light), neutral warm bases
+   Neobrutalism palette — flat colors, hard black borders,
+   hard offset shadows (no blur), cream/warm base.
+   Original 9Router palette preserved as commented reference.
    ============================================================ */
 :root {
   --aurora-coral: #e96f50;
   --aurora-coral-strong: #ce4f35;
   --aurora-mint: #4fcf9f;
-  --aurora-grid: color-mix(in srgb, var(--color-text-muted) 7%, transparent);
-  --glass-bg: color-mix(in srgb, var(--color-surface) 78%, transparent);
-  --glass-bg-strong: color-mix(in srgb, var(--color-surface) 90%, transparent);
-  --glass-border: color-mix(in srgb, var(--color-text-main) 11%, transparent);
+  --aurora-grid: color-mix(in srgb, var(--color-text-main) 9%, transparent);
+  --glass-bg: var(--color-surface);
+  --glass-bg-strong: var(--color-surface);
+  --glass-border: #000000;
   --glass-highlight: color-mix(in srgb, white 10%, transparent);
-  --shadow-glass: 0 24px 64px rgb(23 16 13 / 18%);
+  --shadow-glass: 8px 8px 0 0 #000000;
 
-  /* Brand scale (light) - centered on #E56A4A */
-  --color-brand-50: #fdf1ed;
-  --color-brand-100: #fadccf;
-  --color-brand-200: #f4b59c;
-  --color-brand-300: #ee8d6a;
-  --color-brand-400: #ea7855;
-  --color-brand-500: #E56A4A;
-  --color-brand-600: #cc5236;
-  --color-brand-700: #a64027;
-  --color-brand-800: #7a2f1d;
-  --color-brand-900: #4d1e12;
+  /* Neobrutalism hard offset shadow tokens (no blur, pure offset) */
+  --nb-border: #000000;
+  --nb-shadow-sm: 3px 3px 0 0 var(--nb-border);
+  --nb-shadow: 4px 4px 0 0 var(--nb-border);
+  --nb-shadow-lg: 6px 6px 0 0 var(--nb-border);
+  --nb-shadow-xl: 8px 8px 0 0 var(--nb-border);
+
+  /* Brand scale (light) - keep orange anchor, flat */
+  --color-brand-50: #fff3ec;
+  --color-brand-100: #ffe0cf;
+  --color-brand-200: #ffc09a;
+  --color-brand-300: #ff9e66;
+  --color-brand-400: #ff8347;
+  --color-brand-500: #FF6B35;
+  --color-brand-600: #e85420;
+  --color-brand-700: #bf3f12;
+  --color-brand-800: #8c2f0e;
+  --color-brand-900: #5a1f08;
 
   /* Primary (legacy alias for backward compat with existing components) */
   --color-primary: var(--color-brand-500);
   --color-primary-hover: var(--color-brand-600);
 
-  /* Surfaces & backgrounds (light) */
-  --color-bg: #FDFAF6;
-  --color-bg-alt: #F7F3EE;
-  --color-surface: #ffffff;
-  --color-surface-2: #f4f4f5;
-  --color-surface-3: #e7e7e9;
-  --color-sidebar: rgba(244, 241, 236, 0.85);
+  /* Neobrutalist accent pops (flat, high-contrast) */
+  --color-accent: #FFD23F;
+  --color-accent-2: #2EC4B6;
 
-  /* Borders */
-  --color-border: #e5e7eb;
-  --color-border-subtle: #f1f1f3;
+  /* Surfaces & backgrounds (light) - warm cream, flat */
+  --color-bg: #F4EDE0;
+  --color-bg-alt: #ECE3D2;
+  --color-surface: #FFFFFF;
+  --color-surface-2: #F2EDE2;
+  --color-surface-3: #E5DDCC;
+  --color-sidebar: #F4EDE0;
+
+  /* Borders - solid black, the neobrutalist signature */
+  --color-border: #000000;
+  --color-border-subtle: #000000;
 
   /* Text */
   --color-text: #0a0a0a;
   --color-text-main: #0a0a0a;
-  --color-text-muted: #6B7280;
-  --color-text-subtle: #9CA3AF;
+  --color-text-muted: #4a4a4a;
+  --color-text-subtle: #6b6b6b;
 
-  /* Status */
-  --color-danger: #cf222e;
-  --color-success: #10B981;
-  --color-warning: #F59E0B;
-  --color-info: #3B82F6;
+  /* Status - flat, saturated for contrast on cream */
+  --color-danger: #E63946;
+  --color-success: #2A9D8F;
+  --color-warning: #FFD23F;
+  --color-info: #2EC4B6;
 
-  /* Radius */
-  --radius-brand: 10px;
-  --radius-brand-lg: 14px;
+  /* Radius - neobrutalism = sharp corners */
+  --radius-brand: 0px;
+  --radius-brand-lg: 0px;
 
-  /* Shadows */
-  --shadow-soft: 0 1px 2px 0 rgba(0,0,0,0.04);
-  --shadow-warm: 0 2px 12px -2px rgba(229, 106, 74, 0.18);
-  --shadow-elevated: 0 12px 28px -4px rgba(60, 50, 45, 0.06);
-  --shadow-elev:
-    inset 0 1px 0 0 rgba(255,255,255,0.8),
-    0 1px 2px rgba(15,23,42,0.04),
-    0 12px 36px -8px rgba(15,23,42,0.10);
-  --shadow-focus: 0 0 0 3px rgba(229,106,74,0.18);
+  /* Shadows - hard offset, no blur */
+  --shadow-soft: var(--nb-shadow-sm);
+  --shadow-warm: var(--nb-shadow);
+  --shadow-elevated: var(--nb-shadow-lg);
+  --shadow-elev: var(--nb-shadow);
+  --shadow-focus: var(--nb-shadow-sm);
 
   color-scheme: light;
 }
 
 .dark {
-  --aurora-grid: rgb(255 255 255 / 3.5%);
-  --glass-bg: rgb(18 25 29 / 76%);
-  --glass-bg-strong: rgb(13 18 22 / 91%);
-  --glass-border: rgb(255 255 255 / 9%);
+  --aurora-grid: rgb(255 255 255 / 5%);
+  --glass-bg: rgb(20 20 20 / 92%);
+  --glass-bg-strong: rgb(15 15 15 / 96%);
+  --glass-border: #000000;
   --glass-highlight: rgb(255 255 255 / 7%);
-  --shadow-glass: 0 28px 80px rgb(0 0 0 / 52%);
+  --shadow-glass: 8px 8px 0 0 #000000;
 
-  /* Brand scale (dark) - centered on #E56A4A, same as light for consistency */
-  --color-brand-50: #fdf1ed;
-  --color-brand-100: #fadccf;
-  --color-brand-200: #f4b59c;
-  --color-brand-300: #ee8d6a;
-  --color-brand-400: #ea7855;
-  --color-brand-500: #E56A4A;
-  --color-brand-600: #cc5236;
-  --color-brand-700: #a64027;
-  --color-brand-800: #7a2f1d;
-  --color-brand-900: #4d1e12;
+  /* Neobrutalism hard offset shadow tokens (dark: white offset for contrast on black) */
+  --nb-border: #000000;
+  --nb-shadow-sm: 3px 3px 0 0 var(--nb-border);
+  --nb-shadow: 4px 4px 0 0 var(--nb-border);
+  --nb-shadow-lg: 6px 6px 0 0 var(--nb-border);
+  --nb-shadow-xl: 8px 8px 0 0 var(--nb-border);
 
-  --color-primary: #E56A4A;
-  --color-primary-hover: #cc5236;
+  /* Brand scale (dark) - same flat orange as light for consistency */
+  --color-brand-50: #fff3ec;
+  --color-brand-100: #ffe0cf;
+  --color-brand-200: #ffc09a;
+  --color-brand-300: #ff9e66;
+  --color-brand-400: #ff8347;
+  --color-brand-500: #FF6B35;
+  --color-brand-600: #e85420;
+  --color-brand-700: #bf3f12;
+  --color-brand-800: #8c2f0e;
+  --color-brand-900: #5a1f08;
 
-  /* Surfaces (dark - Claude-like neutral warm) */
-  --color-bg: #1a1a1a;
-  --color-bg-alt: #1F1F1E;
-  --color-surface: #262626;
-  --color-surface-2: #303030;
-  --color-surface-3: #3a3a3a;
-  --color-sidebar: rgba(30, 30, 30, 0.85);
+  --color-primary: #FF6B35;
+  --color-primary-hover: #e85420;
 
-  --color-border: #333333;
+  --color-accent: #FFD23F;
+  --color-accent-2: #2EC4B6;
+
+  /* Surfaces (dark - deep flat charcoal, solid) */
+  --color-bg: #131313;
+  --color-bg-alt: #181818;
+  --color-surface: #1f1f1f;
+  --color-surface-2: #2a2a2a;
+  --color-surface-3: #383838;
+  --color-sidebar: #131313;
+
+  /* Borders - solid black in dark too (neobrutal signature) */
+  --color-border: #000000;
   --color-border-subtle: #2a2a2a;
 
-  --color-text: #ededed;
-  --color-text-main: #ededed;
-  --color-text-muted: #9ca3af;
-  --color-text-subtle: #6b7280;
+  --color-text: #f5f5f0;
+  --color-text-main: #f5f5f0;
+  --color-text-muted: #b0b0a8;
+  --color-text-subtle: #80807a;
 
-  --color-danger: #ef4444;
-  --color-success: #22c55e;
-  --color-warning: #fbbf24;
-  --color-info: #60a5fa;
+  --color-danger: #FF5470;
+  --color-success: #2EC4B6;
+  --color-warning: #FFD23F;
+  --color-info: #4CC9F0;
 
-  --shadow-soft: 0 1px 2px 0 rgba(0,0,0,0.3);
-  --shadow-warm: 0 2px 12px -2px rgba(229, 106, 74, 0.25);
-  --shadow-elevated: 0 12px 28px -4px rgba(0, 0, 0, 0.45);
-  --shadow-elev:
-    inset 0 1px 0 0 rgba(255,255,255,0.06),
-    0 1px 2px rgba(0,0,0,0.4),
-    0 16px 48px -8px rgba(0,0,0,0.55);
-  --shadow-focus: 0 0 0 3px rgba(229, 106, 74, 0.18);
+  --shadow-soft: var(--nb-shadow-sm);
+  --shadow-warm: var(--nb-shadow);
+  --shadow-elevated: var(--nb-shadow-lg);
+  --shadow-elev: var(--nb-shadow);
+  --shadow-focus: var(--nb-shadow-sm);
 
   color-scheme: dark;
 }
@@ -168,6 +185,52 @@ select {
 .dark select option {
   background-color: var(--color-surface);
   color: var(--color-text-main);
+}
+
+/* ============================================================
+   Neobrutalism global rules — sharp corners, thick black borders,
+   hard offset shadows, chunky focus rings. These are unlayered so
+   they win over Tailwind utilities (unlayered > @layer utilities in
+   the cascade). Component logic/structure is untouched.
+   ============================================================ */
+
+/* Sharp corners everywhere by default. rounded-full is restored below so
+   toggles, badges, avatars, status pills and dots stay circular (breaking
+   those into squares would look broken, not brutalist). */
+*,
+*::before,
+*::after {
+  border-radius: 0 !important;
+}
+.rounded-full,
+.\!rounded-full {
+  border-radius: 9999px !important;
+}
+
+/* Neobrutalism signature: bump the bare `border` utility from 1px to a thick 2px.
+   The 461 components using `border` get solid black (color comes from --color-border)
+   thick edges. border-0 / border-2 / border-4 keep their explicit widths. */
+.border {
+  border-width: 2px;
+}
+.\!border {
+  border-width: 2px !important;
+}
+
+/* Chunky offset focus ring — thick black outline, no soft glow. */
+:focus-visible {
+  outline: 3px solid var(--nb-border, #000);
+  outline-offset: 2px;
+  box-shadow: var(--nb-shadow-sm, 3px 3px 0 0 #000) !important;
+}
+/* Buttons & inputs that sit on surfaces get a hard offset shadow on the element
+   (not just focus) only when they already carry a shadow utility — keeps
+   borderless/text buttons flat. */
+:where(button, [role="button"]).shadow-soft,
+:where(button, [role="button"]).shadow-warm,
+:where(button, [role="button"]).shadow-elev,
+:where(button, [role="button"]).shadow-elevated {
+  border: 2px solid var(--nb-border, #000);
 }
 
 @theme inline {
