@@ -4,7 +4,9 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 .skeleton-shimmer {
-  background-image: linear-gradient(90deg, transparent, color-mix(in srgb, var(--color-text-muted) 12%, transparent), transparent);
+  /* Stronger sweep so the shimmer is actually visible on the neobrutalist solid track.
+     Was 12% opacity — too faint against the cream/charcoal base. */
+  background-image: linear-gradient(90deg, transparent, color-mix(in srgb, var(--color-text-main) 28%, transparent), transparent);
   background-size: 200% 100%;
   animation: skeleton-shimmer 1.5s ease-in-out infinite;
 }

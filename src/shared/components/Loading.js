@@ -32,12 +32,13 @@ export function PageLoading({ message = "Loading..." }) {
   );
 }
 
-// Skeleton loading
+// Skeleton loading — neobrutalist: solid track (not near-invisible translucent) so it
+// actually shows against the cream/charcoal background, with the shimmer sweep on top.
 export function Skeleton({ className, ...props }) {
   return (
     <div
       className={cn(
-        "skeleton-shimmer rounded-[10px] border border-border-subtle bg-surface-2/80",
+        "skeleton-shimmer !rounded-none border-2 border-black bg-surface-3 dark:bg-neutral-700",
         className
       )}
       {...props}
@@ -48,10 +49,10 @@ export function Skeleton({ className, ...props }) {
 // Card skeleton
 export function CardSkeleton() {
   return (
-    <div className="rounded-[14px] border border-border-subtle bg-surface/95 p-6 shadow-[var(--shadow-soft)]">
+    <div className="!rounded-none border-2 border-black bg-surface p-6 shadow-[3px_3px_0_0_#000]">
       <div className="flex items-center justify-between mb-4">
         <Skeleton className="h-4 w-24" />
-        <Skeleton className="size-10 rounded-[10px]" />
+        <Skeleton className="size-10" />
       </div>
       <Skeleton className="h-8 w-16 mb-2" />
       <Skeleton className="h-3 w-20" />
