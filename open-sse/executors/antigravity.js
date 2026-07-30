@@ -124,7 +124,7 @@ export class AntigravityExecutor extends BaseExecutor {
   }
 
   // sessionId comes from transformRequest output; base.execute runs transformRequest before
-  // buildHeaders, so we read it from the per-request context cached there (fallback: explicit arg).
+  // buildHeaders, so we read it from instance state cached there (fallback: explicit arg).
   buildHeaders(credentials, stream = true, sessionId = null) {
     return {
       "Content-Type": "application/json",
@@ -135,6 +135,10 @@ export class AntigravityExecutor extends BaseExecutor {
 
   transformRequest(model, body, stream, credentials) {
     const projectId = credentials?.projectId || this.generateProjectId();
+
+    // OpenAI clients may include stream_options even for non-streaming calls.
+    // Google generateContent rejects that combination before processing the request.
+    if (stream !== true) delete body.stream_options;
 
     // ─── Image generation: completely different request structure ───
     if (isImageModel(model)) {
@@ -264,7 +268,7 @@ export class AntigravityExecutor extends BaseExecutor {
     return {
       ...body,
       project: projectId,
-      model: model,
+      model: body.model || model,
       userAgent: "antigravity",
       requestType: "agent",
       requestId: buildIdeRequestId({ body, request: transformedRequest, credentials, model, requestType: "agent" }),

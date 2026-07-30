@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect } from "react";
 import PropTypes from "prop-types";
 import {
   Card,
@@ -23,7 +23,6 @@ import Link from "next/link";
 import { getErrorCode, getRelativeTime } from "@/shared/utils";
 import { useNotificationStore } from "@/store/notificationStore";
 import { useHeaderSearchStore } from "@/store/headerSearchStore";
-import useProviderStore from "@/store/providerStore";
 import ModelAvailabilityBadge from "./components/ModelAvailabilityBadge";
 import AddCompatibleModal from "./components/AddCompatibleModal";
 
@@ -116,152 +115,100 @@ export default function ProvidersPage() {
     return () => unregisterSearch();
   }, [registerSearch, unregisterSearch]);
 
-  const normalizedSearch = searchQuery.trim().toLowerCase();
+  const matchSearch = (name) =>
+    !searchQuery.trim() ||
+    name.toLowerCase().includes(searchQuery.trim().toLowerCase());
 
-  const matchSearch = useCallback(
-    (name) =>
-      !normalizedSearch ||
-      name.toLowerCase().includes(normalizedSearch),
-    [normalizedSearch],
-  );
+  const sortByPriority = (entries, authType) =>
+    [...entries].sort(([ka, a], [kb, b]) => {
+      const pa = a.priority ?? 999;
+      const pb = b.priority ?? 999;
+      if (pa !== pb) return pa - pb;
+      const sa = getProviderStats(ka, authType);
+      const sb = getProviderStats(kb, authType);
+      const ca = sa.connected > 0 ? 1 : 0;
+      const cb = sb.connected > 0 ? 1 : 0;
+      if (ca !== cb) return cb - ca;
+      return (a.name || "").localeCompare(b.name || "");
+    });
+
+  const sortItemsByPriority = (items, authType) =>
+    [...items].sort((a, b) => {
+      const pa = a.priority ?? 999;
+      const pb = b.priority ?? 999;
+      if (pa !== pb) return pa - pb;
+      const sa = getProviderStats(a.id, authType);
+      const sb = getProviderStats(b.id, authType);
+      const ca = sa.connected > 0 ? 1 : 0;
+      const cb = sb.connected > 0 ? 1 : 0;
+      if (ca !== cb) return cb - ca;
+      return (a.name || "").localeCompare(b.name || "");
+    });
 
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      setLoading(true);
+    const fetchData = async () => {
       try {
-        const [connectionsData, nodesData] = await Promise.all([
-          useProviderStore.getState().fetchProviders(),
-          useProviderStore.getState().fetchProviderNodes(),
+        const [connectionsRes, nodesRes] = await Promise.all([
+          fetch("/api/providers"),
+          fetch("/api/provider-nodes"),
         ]);
-        if (cancelled) return;
-        setConnections(connectionsData || []);
-        setProviderNodes(
-          Array.isArray(nodesData) ? nodesData : nodesData?.nodes || [],
-        );
+        const connectionsData = await connectionsRes.json();
+        const nodesData = await nodesRes.json();
+        if (connectionsRes.ok)
+          setConnections(connectionsData.connections || []);
+        if (nodesRes.ok) setProviderNodes(nodesData.nodes || []);
       } catch (error) {
         console.log("Error fetching data:", error);
       } finally {
-        if (!cancelled) setLoading(false);
+        setLoading(false);
       }
-    })();
-    return () => {
-      cancelled = true;
     };
+    fetchData();
   }, []);
 
-  // Precompute effective status + per-(provider, authType) stats once per render
-  // so sorting and card rendering do not rescan all connections repeatedly.
-  const statsByProvider = useMemo(() => {
-    const now = Date.now();
-    const map = new Map();
-    for (const c of connections) {
-      const key = `${c.provider}__${c.authType}`;
-      const isCooldown = Object.entries(c).some(
+  const getProviderStats = (providerId, authType) => {
+    const authTypes = Array.isArray(authType) ? authType : [authType];
+    const providerConnections = connections.filter(
+      (c) => c.provider === providerId && authTypes.includes(c.authType),
+    );
+
+    const getEffectiveStatus = (conn) => {
+      const isCooldown = Object.entries(conn).some(
         ([k, v]) =>
-          k.startsWith("modelLock_") && v && new Date(v).getTime() > now,
+          k.startsWith("modelLock_") && v && new Date(v).getTime() > Date.now(),
       );
-      const effectiveStatus =
-        c.testStatus === "unavailable" && !isCooldown ? "active" : c.testStatus;
-      const connected =
-        effectiveStatus === "active" || effectiveStatus === "success" ? 1 : 0;
-      const isError =
-        effectiveStatus === "error" ||
-        effectiveStatus === "expired" ||
-        effectiveStatus === "unavailable";
+      return conn.testStatus === "unavailable" && !isCooldown
+        ? "active"
+        : conn.testStatus;
+    };
 
-      let bucket = map.get(key);
-      if (!bucket) {
-        bucket = {
-          connected: 0,
-          error: 0,
-          total: 0,
-          allDisabled: true,
-          latestErrorAt: 0,
-          latestErrorConn: null,
-        };
-        map.set(key, bucket);
-      }
-      bucket.total += 1;
-      if (c.isActive !== false) bucket.allDisabled = false;
-      bucket.connected += connected;
-      if (isError) {
-        bucket.error += 1;
-        const errAt = c.lastErrorAt ? new Date(c.lastErrorAt).getTime() : 0;
-        if (errAt && errAt > bucket.latestErrorAt) {
-          bucket.latestErrorAt = errAt;
-          bucket.latestErrorConn = c;
-        }
-      }
-    }
-    return map;
-  }, [connections]);
+    const connected = providerConnections.filter((c) => {
+      const status = getEffectiveStatus(c);
+      return status === "active" || status === "success";
+    }).length;
 
-  const getProviderStats = useCallback(
-    (providerId, authType) => {
-      const authTypes = Array.isArray(authType) ? authType : [authType];
-      let connected = 0;
-      let error = 0;
-      let total = 0;
-      let allDisabled = true;
-      let latestErrorConn = null;
-      let latestErrorAt = 0;
+    const errorConns = providerConnections.filter((c) => {
+      const status = getEffectiveStatus(c);
+      return (
+        status === "error" || status === "expired" || status === "unavailable"
+      );
+    });
 
-      for (const auth of authTypes) {
-        const bucket = statsByProvider.get(`${providerId}__${auth}`);
-        if (!bucket) continue;
-        connected += bucket.connected;
-        error += bucket.error;
-        total += bucket.total;
-        if (!bucket.allDisabled) allDisabled = false;
-        if (bucket.latestErrorAt > latestErrorAt) {
-          latestErrorAt = bucket.latestErrorAt;
-          latestErrorConn = bucket.latestErrorConn;
-        }
-      }
-      if (total === 0) allDisabled = false;
-      const errorCode = latestErrorConn
-        ? getConnectionErrorTag(latestErrorConn)
-        : null;
-      const errorTime = latestErrorConn?.lastErrorAt
-        ? getRelativeTime(latestErrorConn.lastErrorAt)
-        : null;
-      return { connected, error, total, errorCode, errorTime, allDisabled };
-    },
-    [statsByProvider],
-  );
+    const error = errorConns.length;
+    const total = providerConnections.length;
+    const allDisabled =
+      total > 0 && providerConnections.every((c) => c.isActive === false);
 
-  const sortByPriority = useCallback(
-    (entries, authType) =>
-      [...entries].sort(([ka, a], [kb, b]) => {
-        const pa = a.priority ?? 999;
-        const pb = b.priority ?? 999;
-        if (pa !== pb) return pa - pb;
-        const sa = getProviderStats(ka, authType);
-        const sb = getProviderStats(kb, authType);
-        const ca = sa.connected > 0 ? 1 : 0;
-        const cb = sb.connected > 0 ? 1 : 0;
-        if (ca !== cb) return cb - ca;
-        return (a.name || "").localeCompare(b.name || "");
-      }),
-    [getProviderStats],
-  );
+    const latestError = errorConns.sort(
+      (a, b) => new Date(b.lastErrorAt || 0) - new Date(a.lastErrorAt || 0),
+    )[0];
+    const errorCode = latestError ? getConnectionErrorTag(latestError) : null;
+    const errorTime = latestError?.lastErrorAt
+      ? getRelativeTime(latestError.lastErrorAt)
+      : null;
 
-  const sortItemsByPriority = useCallback(
-    (items, authType) =>
-      [...items].sort((a, b) => {
-        const pa = a.priority ?? 999;
-        const pb = b.priority ?? 999;
-        if (pa !== pb) return pa - pb;
-        const sa = getProviderStats(a.id, authType);
-        const sb = getProviderStats(b.id, authType);
-        const ca = sa.connected > 0 ? 1 : 0;
-        const cb = sb.connected > 0 ? 1 : 0;
-        if (ca !== cb) return cb - ca;
-        return (a.name || "").localeCompare(b.name || "");
-      }),
-    [getProviderStats],
-  );
+    return { connected, error, total, errorCode, errorTime, allDisabled };
+  };
 
   // Toggle all connections for a provider on/off. authType may be a single
   // string or an array (kiro counts oauth + api_key/apikey together).
@@ -282,8 +229,6 @@ export default function ProvidersPage() {
         }),
       ),
     );
-    // Keep shared cache consistent so other pages don't serve stale toggle state.
-    useProviderStore.getState().invalidate();
   };
 
   const handleBatchTest = async (mode, providerId = null) => {
@@ -311,86 +256,80 @@ export default function ProvidersPage() {
     }
   };
 
-  const compatibleProviders = useMemo(() => {
-    const result = [];
-    for (const node of providerNodes) {
-      if (node.type !== "openai-compatible") continue;
-      const name = node.name || "OpenAI Compatible";
-      if (!matchSearch(name)) continue;
-      result.push({
-        id: node.id,
-        name,
-        color: "#10A37F",
-        textIcon: "OC",
-        apiType: node.apiType,
-      });
-    }
-    return result;
-  }, [providerNodes, matchSearch]);
+  const compatibleProviders = providerNodes
+    .filter((node) => node.type === "openai-compatible")
+    .map((node) => ({
+      id: node.id,
+      name: node.name || "OpenAI Compatible",
+      color: "#10A37F",
+      textIcon: "OC",
+      apiType: node.apiType,
+    }))
+    .filter((p) => matchSearch(p.name));
 
-  const anthropicCompatibleProviders = useMemo(() => {
-    const result = [];
-    for (const node of providerNodes) {
-      if (node.type !== "anthropic-compatible") continue;
-      const name = node.name || "Anthropic Compatible";
-      if (!matchSearch(name)) continue;
-      result.push({
-        id: node.id,
-        name,
-        color: "#D97757",
-        textIcon: "AC",
-      });
-    }
-    return result;
-  }, [providerNodes, matchSearch]);
+  const anthropicCompatibleProviders = providerNodes
+    .filter((node) => node.type === "anthropic-compatible")
+    .map((node) => ({
+      id: node.id,
+      name: node.name || "Anthropic Compatible",
+      color: "#D97757",
+      textIcon: "AC",
+    }))
+    .filter((p) => matchSearch(p.name));
 
-  const oauthEntries = useMemo(
-    () =>
-      sortByPriority(
-        Object.entries(OAUTH_PROVIDERS).filter(([, info]) => !info.hidden && matchSearch(info.name)),
-        "oauth",
-      ),
-    [sortByPriority, matchSearch],
+  // Dual-auth providers (oauth + apikey) store API keys as authType "apikey"
+  // (and sometimes "api_key"). Card stats must count both so totals match detail.
+  // kiro has no authModes in registry but accepts both (headless uses "api_key").
+  const dualAuthTypes = (info, key) => {
+    if (key === "kiro") return ["oauth", "apikey", "api_key"];
+    const modes = info?.authModes;
+    if (!Array.isArray(modes) || !modes.includes("apikey")) return "oauth";
+    return ["oauth", "apikey", "api_key"];
+  };
+
+  const oauthEntries = sortByPriority(
+    Object.entries(OAUTH_PROVIDERS).filter(([, info]) => !info.hidden && matchSearch(info.name)),
+    "oauth",
   );
-  const freeEntries = useMemo(
-    () =>
-      Object.entries(FREE_PROVIDERS)
-        .filter(([, info]) => !info.hidden && matchSearch(info.name))
-        .sort(([, a], [, b]) => (b.noAuth ? 1 : 0) - (a.noAuth ? 1 : 0)),
-    [matchSearch],
-  );
-  const freeTierEntries = useMemo(
-    () =>
-      sortByPriority(
-        Object.entries(FREE_TIER_PROVIDERS).filter(
-          ([, info]) =>
-            !info.hidden &&
-            matchSearch(info.name) &&
-            (info.serviceKinds ?? ["llm"]).includes("llm"),
-        ),
-        "freeTier",
-      ).sort(([, a], [, b]) => (b.noAuth ? 1 : 0) - (a.noAuth ? 1 : 0)),
-    [sortByPriority, matchSearch],
-  );
+  const freeEntries = Object.entries(FREE_PROVIDERS)
+    .filter(([, info]) => !info.hidden && matchSearch(info.name))
+    .sort(([, a], [, b]) => (b.noAuth ? 1 : 0) - (a.noAuth ? 1 : 0));
+  // Free Tier cards may be oauth-only (e.g. kimchi) or dual-auth, so count via
+  // dualAuthTypes per provider instead of a fixed "apikey" — otherwise oauth
+  // connections are invisible here (mismatch with the detail page).
+  const freeTierEntries = Object.entries(FREE_TIER_PROVIDERS)
+    .filter(
+      ([, info]) =>
+        !info.hidden &&
+        matchSearch(info.name) &&
+        (info.serviceKinds ?? ["llm"]).includes("llm"),
+    )
+    .sort(([ka, a], [kb, b]) => {
+      const pa = a.priority ?? 999;
+      const pb = b.priority ?? 999;
+      if (pa !== pb) return pa - pb;
+      const noAuthDiff = (b.noAuth ? 1 : 0) - (a.noAuth ? 1 : 0);
+      if (noAuthDiff !== 0) return noAuthDiff;
+      const ca = getProviderStats(ka, dualAuthTypes(a, ka)).connected > 0 ? 0 : 1;
+      const cb = getProviderStats(kb, dualAuthTypes(b, kb)).connected > 0 ? 0 : 1;
+      if (ca !== cb) return ca - cb;
+      return (a.name || "").localeCompare(b.name || "");
+    });
   // API Key: connected providers first, then alphabetical by name
-  const apikeyEntries = useMemo(
-    () =>
-      Object.entries(APIKEY_PROVIDERS)
-        .filter(
-          ([, info]) =>
-            !info.hidden &&
-            (info.serviceKinds ?? ["llm"]).includes("llm") &&
-            matchSearch(info.name),
-        )
-        .sort(([ka, a], [kb, b]) => {
-          const ca = getProviderStats(ka, "apikey").total > 0 ? 0 : 1;
-          const cb = getProviderStats(kb, "apikey").total > 0 ? 0 : 1;
-          if (ca !== cb) return ca - cb;
-          return (a.name || "").localeCompare(b.name || "");
-        }),
-    [getProviderStats, matchSearch],
-  );
-  const isApikeySearching = !!normalizedSearch;
+  const apikeyEntries = Object.entries(APIKEY_PROVIDERS)
+    .filter(
+      ([, info]) =>
+        !info.hidden &&
+        (info.serviceKinds ?? ["llm"]).includes("llm") &&
+        matchSearch(info.name),
+    )
+    .sort(([ka, a], [kb, b]) => {
+      const ca = getProviderStats(ka, "apikey").total > 0 ? 0 : 1;
+      const cb = getProviderStats(kb, "apikey").total > 0 ? 0 : 1;
+      if (ca !== cb) return ca - cb;
+      return (a.name || "").localeCompare(b.name || "");
+    });
+  const isApikeySearching = !!searchQuery.trim();
   const visibleApikeyEntries =
     isApikeySearching || showAllApikey
       ? apikeyEntries
@@ -507,16 +446,19 @@ export default function ProvidersPage() {
           </div>
         </div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4">
-          {oauthEntries.map(([key, info]) => (
-            <ProviderCard
-              key={key}
-              providerId={key}
-              provider={info}
-              stats={getProviderStats(key, "oauth")}
-              authType="oauth"
-              onToggle={(active) => handleToggleProvider(key, "oauth", active)}
-            />
-          ))}
+          {oauthEntries.map(([key, info]) => {
+            const authTypes = dualAuthTypes(info, key);
+            return (
+              <ProviderCard
+                key={key}
+                providerId={key}
+                provider={info}
+                stats={getProviderStats(key, authTypes)}
+                authType="oauth"
+                onToggle={(active) => handleToggleProvider(key, authTypes, active)}
+              />
+            );
+          })}
         </div>
       </div>
       )}
@@ -549,12 +491,9 @@ export default function ProvidersPage() {
         </div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4">
           {freeEntries.map(([key, info]) => {
-            // Kiro accepts both OAuth and api-key connections; count/toggle both
-            // so the card total matches the provider detail page (#kiro-apikey).
-            // Kiro's headless api-key flow persists authType "api_key" (underscore),
-            // while generic apikey providers use "apikey" — include both spellings.
-            const freeAuthTypes =
-              key === "kiro" ? ["oauth", "apikey", "api_key"] : "oauth";
+            // Dual-auth (e.g. kiro): count/toggle oauth + apikey/api_key so the
+            // card total matches the provider detail page.
+            const freeAuthTypes = dualAuthTypes(info, key);
             return (
               <ProviderCard
                 key={key}
@@ -568,16 +507,19 @@ export default function ProvidersPage() {
               />
             );
           })}
-          {freeTierEntries.map(([key, info]) => (
-            <ApiKeyProviderCard
-              key={key}
-              providerId={key}
-              provider={info}
-              stats={getProviderStats(key, "apikey")}
-              authType="apikey"
-              onToggle={(active) => handleToggleProvider(key, "apikey", active)}
-            />
-          ))}
+          {freeTierEntries.map(([key, info]) => {
+            const freeAuthTypes = dualAuthTypes(info, key);
+            return (
+              <ApiKeyProviderCard
+                key={key}
+                providerId={key}
+                provider={info}
+                stats={getProviderStats(key, freeAuthTypes)}
+                authType={Array.isArray(freeAuthTypes) ? (freeAuthTypes[0] ?? "apikey") : freeAuthTypes}
+                onToggle={(active) => handleToggleProvider(key, freeAuthTypes, active)}
+              />
+            );
+          })}
         </div>
       </div>
       )}

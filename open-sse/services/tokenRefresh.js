@@ -1,6 +1,5 @@
 import { PROVIDERS } from "../config/providers.js";
 import { OAUTH_ENDPOINTS, REFRESH_LEAD_MS } from "../config/appConstants.js";
-import { runRefreshContext } from "./tokenRefresh/dedup.js";
 import {
   refreshXaiToken,
   refreshAccessToken,
@@ -14,6 +13,10 @@ import {
   refreshGitHubToken,
   refreshCopilotToken,
   refreshCodebuddyToken,
+  refreshCodebuddyIntlToken,
+  refreshTraeToken,
+  refreshZedToken,
+  refreshWindsurfToken,
   classifyOAuthRefreshError,
 } from "./tokenRefresh/providers.js";
 
@@ -30,6 +33,10 @@ export {
   refreshGitHubToken,
   refreshCopilotToken,
   refreshCodebuddyToken,
+  refreshCodebuddyIntlToken,
+  refreshTraeToken,
+  refreshZedToken,
+  refreshWindsurfToken,
   classifyOAuthRefreshError,
 };
 
@@ -139,6 +146,10 @@ const REFRESH_HANDLERS = {
   "grok-cli": (c, log) => refreshXaiToken(c.refreshToken, log),
   gcli: (c, log) => refreshXaiToken(c.refreshToken, log),
   "codebuddy-cn": (c, log) => refreshCodebuddyToken(c.refreshToken, log),
+  "codebuddy-intl": (c, log) => refreshCodebuddyIntlToken(c.refreshToken, log),
+  trae: (c, log) => refreshTraeToken(c.refreshToken, c, log),
+  zed: () => refreshZedToken(),
+  windsurf: (c, log) => refreshWindsurfToken(c, log),
   // Kimi Code OAuth (merged into id `kimi`); legacy id still routes here
   kimi: (c, log) => refreshKimiToken(c.refreshToken, c, log),
   "kimi-coding": (c, log) => refreshKimiToken(c.refreshToken, c, log),
@@ -151,11 +162,7 @@ export async function getAccessToken(provider, credentials, log) {
     log?.warn?.("TOKEN_REFRESH", `No valid refresh token available for provider: ${provider}`);
     return null;
   }
-  // Establish the per-connection refresh context so dedupRefresh() scopes its cache by connection
-  // (see oauthCredentialManager.refreshProviderCredentials for the full rationale).
-  return runRefreshContext(credentials.connectionId || credentials.id || null, () =>
-    _getAccessTokenInternal(provider, credentials, log)
-  );
+  return _getAccessTokenInternal(provider, credentials, log);
 }
 
 async function _getAccessTokenInternal(provider, credentials, log) {
@@ -172,12 +179,8 @@ async function _getAccessTokenInternal(provider, credentials, log) {
 
 export async function refreshTokenByProvider(provider, credentials, log) {
   if (!credentials.refreshToken) return null;
-  // Establish per-connection context (defensive: refreshProviderCredentials already does this for
-  // its own call path, but refreshTokenByProvider may be invoked directly elsewhere).
-  return runRefreshContext(credentials.connectionId || credentials.id || null, () => {
-    const handler = REFRESH_HANDLERS[provider];
-    return handler ? handler(credentials, log) : refreshAccessToken(provider, credentials.refreshToken, credentials, log);
-  });
+  const handler = REFRESH_HANDLERS[provider];
+  return handler ? handler(credentials, log) : refreshAccessToken(provider, credentials.refreshToken, credentials, log);
 }
 
 export function formatProviderCredentials(provider, credentials, log) {

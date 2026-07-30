@@ -1,3 +1,35 @@
+# v0.5.45 (2026-07-30)
+
+## Features
+- **Providers**: add Poolside (OpenAI-compatible)
+- **Providers**: add api-airforce, baidu, bazaarlink, bluesminds, kilo-gateway, llm7, morph, sambanova, tencent
+- **OAuth**: zed / trae / windsurf providers + harden callback proxies
+- **CLI tools**: set Claude Code max context tokens
+- **Qoder**: PAT auth + refresh model list
+- **Gemini**: Gemini 3.6 Flash tier routing + Gemini 3.5 Flash Lite
+- **Claude**: bump default Opus to `claude-opus-5`
+- **Kiro**: add Claude Opus 5 models
+- **Usage**: Kimi and DeepSeek usage handlers
+- **Usage**: SuperGrok weekly pool via gRPC-web
+
+## Fixes
+- **Refresh**: rotate `refresh_token` between retry attempts
+- **Kiro**: canonicalize tool history and route API keys correctly
+- **Kiro**: normalize dashboard thinking intensity models
+- **Cursor**: stop leaking agent tool errors as text
+- **Gemini**: fill empty tool schemas after `$ref` strip
+- **Antigravity**: strip `stream_options` from non-stream requests
+- **Jina-reader**: recover after transient errors, use JSON POST API
+- **Usage**: record exact embedding tokens
+- **Tunnel**: preserve successor cloudflared PID
+- **Console-log**: initialize capture at server boot + prevent SSE proxy buffering
+- **Dashboard**: count dual-auth, free-tier OAuth and API-key connections correctly
+- **Dashboard**: flex quota rows, thin global scrollbars, no hidden-row overflow
+
+## Docs
+- **i18n**: expand pt-BR translation to 986 terms
+- README: Indonesian translation
+
 # v0.5.40 (2026-07-20)
 
 ## Features
@@ -122,40 +154,6 @@
 - **Codebuddy-cn**: strip empty tool_calls arrays to preserve reasoning — zmf
 - **Antigravity**: preserve Claude tool delta index (#2223) — Sutarto Jordan Chrisfivo
 - **MITM**: generate root CA on server startup (#2228) — Sutarto Jordan Chrisfivo
-# v0.5.16 (2026-06-30)
-
-## ⚠️ Breaking / behavioral changes
-- **Security: API keys now required by default.** `requireApiKey` defaults to `true` (fail-closed).
-  On a fresh or upgraded install where the LLM endpoints are reachable beyond loopback, requests
-  without a valid API key are now rejected. Local (loopback) clients are still exempt. If you
-  relied on the previous unauthenticated default, create an API key in the dashboard or set
-  `requireApiKey: false` explicitly after weighing the risk.
-- **Security: remote login with the default password (`123456`) no longer grants full access.**
-  It now issues a short-lived token scoped to setting a new password, so a leaked/known default
-  can no longer expose stored provider credentials. Set a password on first use.
-
-## Security
-- Ignore spoofed `x-9r-real-ip` under bare `next start` (only trust it via `x-9r-via-proxy` from `custom-server`)
-- Derive MITM sudo-password AES key from a persisted random secret + machineId (was recoverable from public machineId alone); backward-compat decrypt for legacy blobs; `rootCA.key` now `0600`
-- Constant-time comparison for inbound API keys (`timingSafeEqual`) instead of short-circuiting equality
-- Login limiter trust model aligned with the locality check; loopback bypasses lockout (no remote-attacker lockout of the admin)
-- CSRF Origin/Referer check on state-changing `/api/*` mutations
-
-## Fixes
-- **Kiro**: monotonic tool-call index (was hardcoded `0`, corrupting/dropping tool calls after the first in a multi-tool turn)
-- **Fallback**: 400/422 client errors now fail fast instead of retrying against every account and locking the pool for 30s
-- **Executors**: per-request `AsyncLocalStorage` context for codex/gemini-cli/antigravity/opencode-go — concurrent requests no longer cross-contaminate session id, compact flag, or model
-- **Token refresh**: `dedupRefresh` no longer caches `null` results (was taking connections offline for 10s on transient failures); dedup key includes connectionId to avoid cross-connection token-rotation desync
-- **sql.js**: atomic write (temp + rename) + robust shutdown flush (no corruption/data-loss on crash)
-- **Backup/restore**: `exportDb`/`importDb` now round-trip usage history, request details, disabled models, and lifetime counter; per-row error isolation (no full rollback on one bad row); backups include WAL sidecar files
-- **Migration**: supply `DEFAULT` for `NOT NULL` `ADD COLUMN` (was silently failing and breaking the table)
-- **Pending requests**: ref-counted safety timer (concurrent requests no longer disarm each other's timer, leaving phantom stuck requests)
-- **401/403 retry**: cancel the original error response body (was leaking an upstream socket per refresh)
-- **Combo**: serialized per-combo rotation (no lost rotation step under concurrent load); surface `Retry-After` header to client
-- **Responses API**: unique monotonic `output_index` per item; multiple `<think>` blocks each open their own reasoning item
-- **Translator**: `fixMissingToolResponses` scans ahead (no spurious empty tool results); RTK preserves error traces for OpenAI tool output; Ollama model fallback (`"ollama"` instead of undefined)
-- **Error config**: scope `capacity`/`overloaded` substring rules to rate-limit statuses (was false-matching deterministic 400s like "context capacity exceeded")
-- **Codex**: `_peekSseOverloaded` acquires reader lazily (no upstream socket leak on the retry path)
 
 # v0.5.15 (2026-06-29)
 

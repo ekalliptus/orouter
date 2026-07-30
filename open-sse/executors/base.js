@@ -3,7 +3,6 @@ import { shouldRefreshCredentials } from "../services/oauthCredentialManager.js"
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { dbg } from "../utils/debugLog.js";
 import { ANTHROPIC_API_VERSION, OPENAI_COMPAT_BASE, ANTHROPIC_COMPAT_BASE } from "../providers/shared.js";
-import { runRequestContext, setRequestContext } from "./requestContext.js";
 
 /**
  * BaseExecutor - Base class for provider executors
@@ -98,14 +97,6 @@ export class BaseExecutor {
   }
 
   async execute({ model, body, stream, credentials, signal, log, proxyOptions = null }) {
-    // Run the whole request inside a per-request AsyncLocalStorage context. Executors are
-    // singletons shared across concurrent requests, so any per-request state subclasses stash
-    // (compact flag, session id, current model) MUST live in this context, not on `this`, or two
-    // in-flight requests to the same provider overwrite each other's state across the awaited fetch.
-    return runRequestContext(async () => this._execute({ model, body, stream, credentials, signal, log, proxyOptions }));
-  }
-
-  async _execute({ model, body, stream, credentials, signal, log, proxyOptions = null }) {
     const fallbackCount = this.getFallbackCount();
     let lastError = null;
     let lastStatus = 0;
@@ -133,13 +124,9 @@ export class BaseExecutor {
     };
 
     for (let urlIndex = 0; urlIndex < fallbackCount; urlIndex++) {
-      // Order matters: transformRequest runs BEFORE buildUrl so any per-request state it derives
-      // (e.g. Codex's compact flag) is already set when buildUrl reads it. Previously buildUrl ran
-      // first and read stale instance state from the previous request on the singleton.
-      const transformedBody = this.transformRequest(model, body, stream, credentials);
-      setRequestContext({ model, stream, urlIndex, credentials });
       const url = this.buildUrl(model, stream, urlIndex, credentials);
-      const headers = this.buildHeaders(credentials, stream);
+      const transformedBody = this.transformRequest(model, body, stream, credentials);
+      const headers = this.buildHeaders(credentials, stream, url);
 
       if (!retryAttemptsByUrl[urlIndex]) retryAttemptsByUrl[urlIndex] = 0;
 

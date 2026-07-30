@@ -6,14 +6,13 @@ import {
   encodeField,
   wrapConnectRPCFrame,
   decodeMessage,
-  encodeMcpTools,
   parseConnectRPCFrame,
   extractTextFromResponse
 } from "../utils/cursorProtobuf.js";
 import { buildCursorHeaders } from "../utils/cursorChecksum.js";
 import { estimateUsage } from "../utils/usageTracking.js";
 import { SSE_DONE, SSE_HEADERS } from "../utils/sseConstants.js";
-import { chatChunkSse } from "../utils/sse.js";
+import { chatChunkSse, sseChunk } from "../utils/sse.js";
 import { FORMATS } from "../translator/formats.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import zlib from "zlib";
@@ -71,15 +70,18 @@ function textFromContent(content) {
     .join("\n");
 }
 
-export function isAgentCapableRequest(body) {
-  return Array.isArray(body?.messages) && body.messages.length > 0 && body.messages.every((message) =>
-    typeof message?.content === "string"
-    || message?.content == null && (message?.role === "assistant" || message?.role === "tool")
-    || Array.isArray(message?.content) && message.content.every((part) => part?.type === "text")
-  );
+function isAgentTextRequest(body) {
+  // Many compatible clients always attach their built-in tool schemas, even
+  // for a normal text turn. Cursor's retired ChatService rejects those
+  // requests; AgentService can still answer the text turn, so ignore schemas
+  // here. A real tool-call/result conversation is kept on the legacy path
+  // until its AgentService tool protocol is implemented.
+  return Array.isArray(body?.messages) && body.messages.every((message) => {
+    if (message?.tool_calls?.length || message?.role === "tool") return false;
+    return typeof message?.content === "string"
+      || Array.isArray(message?.content) && message.content.every((part) => part?.type === "text");
+  });
 }
-
-const isAgentTextRequest = isAgentCapableRequest;
 
 function encodeHistoryMessage(message) {
   const content = textFromContent(message?.content);
@@ -93,7 +95,7 @@ function encodeHistoryMessage(message) {
   return agentMessage(1, agentMessage(1, agentMessage(1, text)));
 }
 
-export function buildAgentRunFrame(messages, model, tools = []) {
+function buildAgentRunFrame(messages, model) {
   const system = messages
     .filter((message) => message?.role === "system")
     .map((message) => textFromContent(message.content))
@@ -126,7 +128,6 @@ export function buildAgentRunFrame(messages, model, tools = []) {
     // An empty ConversationStateStructure starts a fresh local agent session.
     agentMessage(1, new Uint8Array()),
     agentMessage(2, conversationAction),
-    ...(tools.length ? [agentMessage(4, encodeMcpTools(tools))] : []),
     ...(system ? [agentString(8, system)] : []),
     agentMessage(9, requestedModel),
   );
@@ -492,7 +493,7 @@ export class CursorExecutor extends BaseExecutor {
     let session;
     try {
       session = this.openAgentHttp2Stream(url, headers, requestController.signal);
-      session.write(buildAgentRunFrame(body.messages || [], model, body.tools || []));
+      session.write(buildAgentRunFrame(body.messages || [], model));
     } catch (error) {
       throw new Error(`Cursor AgentService request failed: ${error.message}`);
     }
@@ -542,6 +543,9 @@ export class CursorExecutor extends BaseExecutor {
           if (done) break;
           pending = Buffer.concat([pending, Buffer.from(value)]);
           pending = decodeAgentFrames(pending, (payload) => {
+            // A single read can carry several frames; once the turn is over the
+            // rest of the batch must not reach the already-closed controller.
+            if (finished) return;
             const serverMessage = decodeMessage(payload);
 
             // agent.v1.AgentServerMessage.interaction_update
@@ -569,9 +573,12 @@ export class CursorExecutor extends BaseExecutor {
               if (execRequest.has(10)) {
                 session.write(createRequestContextResponse());
               } else {
+                // Every other ExecServerMessage variant is an editor-backed tool
+                // (shell, read, write, …) that 9router cannot service. Fail the
+                // turn rather than narrating protocol state as assistant text.
+                debugLog(`[CURSOR AGENT] Unsupported exec request fields: ${[...execRequest.keys()].join(",")}`);
                 finished = true;
                 onEvent({ type: "error", value: "Cursor AgentService requested an unsupported IDE tool" });
-                onEvent({ type: "done" });
               }
             }
           });
@@ -629,7 +636,12 @@ export class CursorExecutor extends BaseExecutor {
           } else if (event.type === "thinking") {
             controller.enqueue(encoder.encode(chatChunkSse({ id: responseId, created, model, delta: { reasoning_content: event.value } })));
           } else if (event.type === "error") {
-            controller.enqueue(encoder.encode(chatChunkSse({ id: responseId, created, model, delta: { content: `\n[${event.value}]` } })));
+            // An SSE error frame, not a content delta: a protocol failure must not
+            // be rendered to the user as the assistant's reply, and downstream
+            // usage tracking must not record the turn as a success.
+            controller.enqueue(encoder.encode(sseChunk({ error: { message: event.value, type: "api_error" } })));
+            controller.enqueue(encoder.encode(SSE_DONE));
+            controller.close();
           } else if (event.type === "done") {
             controller.enqueue(encoder.encode(chatChunkSse({ id: responseId, created, model, delta: {}, finishReason: "stop" })));
             controller.enqueue(encoder.encode(SSE_DONE));

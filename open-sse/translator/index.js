@@ -62,8 +62,13 @@ export function translateRequest(sourceFormat, targetFormat, model, body, stream
   // Always ensure tool_calls have id (some providers require it)
   ensureToolCallIds(result);
   
-  // Fix missing tool responses (insert empty tool_result if needed)
-  fixMissingToolResponses(result);
+  // Kiro performs stricter source-aware reconciliation after session replay.
+  // The generic helper inserts OpenAI `role: tool` messages, which a direct
+  // Claude→Kiro translator cannot consume and which cannot repair partial
+  // parallel tool results.
+  if (targetFormat !== FORMATS.KIRO) {
+    fixMissingToolResponses(result);
+  }
 
   // Capture thinking intent from the original (pre-translation) body, before any
   // format conversion strips/renames the fields. Applied after translation.
@@ -240,15 +245,10 @@ export function initState(sourceFormat) {
       responseId: `resp_${Date.now()}`,
       created: Math.floor(Date.now() / 1000),
       started: false,
-      // Single monotonic counter so reasoning, message and each function-call item each get a
-      // unique output_index in the Responses stream (see startReasoning/emitTextContent/emitToolCall).
-      outputIndex: 0,
       msgTextBuf: {},
       msgItemAdded: {},
       msgContentAdded: {},
       msgItemDone: {},
-      msgOutputIndex: undefined,
-      msgId: undefined,
       reasoningId: "",
       reasoningIndex: -1,
       reasoningBuf: "",
@@ -260,7 +260,6 @@ export function initState(sourceFormat) {
       funcCallIds: {},
       funcArgsDone: {},
       funcItemDone: {},
-      funcOutputIndex: {},
       completedSent: false
     };
   }
