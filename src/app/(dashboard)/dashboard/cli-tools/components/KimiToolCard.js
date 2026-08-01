@@ -172,16 +172,28 @@ export default function KimiToolCard({
       ? selectedApiKey
       : (!cloudEnabled ? "sk_9router" : "<API_KEY_FROM_DASHBOARD>");
 
-    // Escape double-quotes for TOML basic strings, so a model/key/baseUrl value that
+    // Escape double-quotes for TOML basic strings, so a model/apiKey/baseUrl value that
     // happens to contain a quote (e.g. from a paste) doesn't produce invalid TOML like
     // model = "cc/claude-opus-5"". Matches the backend's serialize escape (\" ).
     const esc = (s) => String(s ?? "").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 
+    // Kimi Code schema (per Moonshot docs): a custom OpenAI-compatible endpoint needs a
+    // [providers.<id>] transport block (type = "openai_legacy") AND a [models.<id>] block
+    // linking a model to that provider. type must be "openai_legacy" (Chat Completions),
+    // NOT "openai". A bare `model` key inside [providers.*] is ignored -> "No models configured".
+    const model = selectedModel || "cc/claude-opus-5";
+    const modelId = String(model).replace(/^[a-zA-Z0-9]+\//, "").replace(/[^a-zA-Z0-9._-]/g, "-").toLowerCase() || "9router-model";
+
     const tomlContent = `[providers.9router]
-type = "openai"
+type = "openai_legacy"
 base_url = "${esc(getEffectiveBaseUrl())}"
 api_key = "${esc(keyToUse)}"
-model = "${esc(selectedModel || "provider/model-id")}"
+
+[models.${modelId}]
+provider = "9router"
+model = "${esc(model)}"
+max_context_size = 200000
+capabilities = ["thinking"]
 `;
 
     return [

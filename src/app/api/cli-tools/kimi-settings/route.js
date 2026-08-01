@@ -72,32 +72,36 @@ const serializeSectionBody = (obj) =>
     .map(([k, v]) => `${k} = "${String(v).replace(/"/g, '\\"')}"`)
     .join("\n");
 
-// Build/replace the [providers.9router] section, preserving the rest of the user's config.
-// Kimi Code registers custom OpenAI-compatible endpoints as a [providers.<name>] section
-// with type / base_url / api_key / model. We merge into existing config rather than wiping it.
-const buildConfigWith9Router = (existingToml, baseUrl, apiKey, model) => {
-  const normalizedBaseUrl = baseUrl.endsWith("/v1") ? baseUrl : `${baseUrl}/v1}`;
-  const section = `type = "openai"\nbase_url = "${normalizedBaseUrl}"\napi_key = "${apiKey}"\nmodel = "${model}"`;
+// Escape a value for a TOML basic string ("..."). Backslash first, then quotes.
+const escToml = (s) => String(s ?? "").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 
-  const sectionHeader = `[providers.${PROVIDER_NAME}]`;
-  const lines = (existingToml || "").split(/\r?\n/);
+// Kimi Code schema (per Moonshot docs) needs TWO sections for a custom OpenAI-compatible
+// endpoint: a [providers.<id>] transport block (type/base_url/api_key) AND a [models.<id>]
+// block linking a model to that provider (provider/model/max_context_size/capabilities).
+// A `model` key inside [providers.*] is NOT recognized — that caused "No models configured".
+const PROVIDER_SECTION = `[providers.${PROVIDER_NAME}]`;
+const MODEL_SECTION_KEY_PREFIX = "models.";
+// Derive a stable model id from the model string (e.g. "cc/claude-opus-5" -> "claude-opus-5").
+const deriveModelId = (model) =>
+  String(model).replace(/^[a-zA-Z0-9]+\//, "").replace(/[^a-zA-Z0-9._-]/g, "-").toLowerCase() || "9router-model";
 
-  // Find and replace an existing [providers.9router] block, else append.
+// Replace (or append) a single TOML section block, preserving everything else.
+const replaceOrAppendSection = (lines, header, bodyLines) => {
   const out = [];
   let i = 0;
   let replaced = false;
   while (i < lines.length) {
     const trimmed = lines[i].trim();
-    if (trimmed === sectionHeader) {
-      // Drop the existing block (the header + following key=value lines until blank/next section)
+    if (trimmed === header) {
+      // Drop existing block: header + following key=value/comment lines until blank or next section.
       i++;
       while (i < lines.length) {
         const t = lines[i].trim();
-        if (t === "" || t.startsWith("#") || t.startsWith("[")) break;
+        if (t === "" || t.startsWith("[")) break;
         i++;
       }
-      out.push(sectionHeader);
-      out.push(section);
+      out.push(header);
+      out.push(...bodyLines);
       out.push("");
       replaced = true;
       continue;
@@ -107,11 +111,66 @@ const buildConfigWith9Router = (existingToml, baseUrl, apiKey, model) => {
   }
   if (!replaced) {
     if (out.length && out[out.length - 1] !== "") out.push("");
-    out.push(sectionHeader);
-    out.push(section);
+    out.push(header);
+    out.push(...bodyLines);
     out.push("");
   }
-  return out.join("\n");
+  return out;
+};
+
+// Build the config: replace [providers.9router] + replace/add a [models.<id>] linked to it.
+// Preserves all the user's other providers and models. Values are escaped for TOML.
+const buildConfigWith9Router = (existingToml, baseUrl, apiKey, model) => {
+  const normalizedBaseUrl = baseUrl.endsWith("/v1") ? baseUrl : `${baseUrl}/v1}`;
+  const providerBody = [
+    `type = "openai_legacy"`,
+    `base_url = "${escToml(normalizedBaseUrl)}"`,
+    `api_key = "${escToml(apiKey)}"`,
+  ];
+  const modelId = deriveModelId(model);
+  const modelBody = [
+    `provider = "${escToml(PROVIDER_NAME)}"`,
+    `model = "${escToml(model)}"`,
+    `max_context_size = 200000`,
+    `capabilities = ["thinking"]`,
+  ];
+
+  let lines = (existingToml || "").split(/\r?\n/);
+  // Replace provider section, then replace/add the model section (drop any prior 9router model), then add ours.
+  lines = replaceOrAppendSection(lines, PROVIDER_SECTION, providerBody);
+  // Remove any existing [models.*] blocks whose provider = "9router" (avoid stale dupes), then add ours.
+  lines = stripStale9RouterModels(lines);
+  lines = replaceOrAppendSection(lines, `[${MODEL_SECTION_KEY_PREFIX}${modelId}]`, modelBody);
+  return lines.join("\n");
+};
+
+// Drop [models.<id>] blocks that point at the 9router provider (cleaning up our own prior writes
+// when the model id changes). Leaves the user's other model blocks untouched.
+const stripStale9RouterModels = (lines) => {
+  const out = [];
+  let i = 0;
+  while (i < lines.length) {
+    const trimmed = lines[i].trim();
+    const isModelSection = /^\[models\.[^\]]+\]$/.test(trimmed);
+    if (isModelSection) {
+      // Peek the block to see if it belongs to 9router.
+      let j = i + 1;
+      let blockRefs9Router = false;
+      while (j < lines.length) {
+        const t = lines[j].trim();
+        if (t === "" || t.startsWith("[")) break;
+        if (/^provider\s*=/.test(t) && t.includes(`"${PROVIDER_NAME}"`)) blockRefs9Router = true;
+        j++;
+      }
+      if (blockRefs9Router) {
+        i = j; // skip this block entirely
+        continue;
+      }
+    }
+    out.push(lines[i]);
+    i++;
+  }
+  return out;
 };
 
 const checkKimiInstalled = async () => {
@@ -203,9 +262,10 @@ export async function DELETE() {
       return NextResponse.json({ success: true, message: "No 9Router section to remove" });
     }
 
-    // Remove ONLY the [providers.9router] block, keep everything else intact.
+    // Remove the [providers.9router] block AND any [models.*] blocks pointing at it,
+    // keeping the user's other providers/models intact.
     const sectionHeader = `[providers.${PROVIDER_NAME}]`;
-    const lines = existing.split(/\r?\n/);
+    let lines = existing.split(/\r?\n/);
     const out = [];
     let i = 0;
     while (i < lines.length) {
@@ -222,7 +282,8 @@ export async function DELETE() {
       out.push(lines[i]);
       i++;
     }
-    await fs.writeFile(configPath, out.join("\n"));
+    lines = stripStale9RouterModels(out);
+    await fs.writeFile(configPath, lines.join("\n"));
 
     return NextResponse.json({ success: true, message: "9Router provider removed from Kimi config" });
   } catch (error) {
