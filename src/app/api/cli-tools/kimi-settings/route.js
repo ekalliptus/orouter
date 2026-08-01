@@ -123,7 +123,7 @@ const replaceOrAppendSection = (lines, header, bodyLines) => {
 const buildConfigWith9Router = (existingToml, baseUrl, apiKey, model) => {
   const normalizedBaseUrl = baseUrl.endsWith("/v1") ? baseUrl : `${baseUrl}/v1}`;
   const providerBody = [
-    `type = "openai_legacy"`,
+    `type = "openai"`,
     `base_url = "${escToml(normalizedBaseUrl)}"`,
     `api_key = "${escToml(apiKey)}"`,
   ];

@@ -355,7 +355,7 @@ amp --model "{{model}}"
       { id: "kimi-k2.6", name: "Kimi K2.6", alias: "kimi-k2.6" },
     ],
     notes: [
-      { type: "info", text: "Kimi Code CLI uses ~/.kimi-code/config.toml (also checks ~/.kimi-cli/config.toml for the older kimi-cli). 9Router registers as an OpenAI-compatible provider (type openai_legacy) + a [models.*] entry so Kimi CLI lists it under /model." },
+      { type: "info", text: "Kimi Code CLI uses ~/.kimi-code/config.toml (also checks ~/.kimi-cli/config.toml for the older kimi-cli). 9Router registers as an OpenAI-compatible provider (type \"openai\") + a [models.*] entry so Kimi CLI lists it under /model." },
       { type: "warning", text: "Install: npm i -g @moonshot-ai/kimi-code OR curl -LsSf https://code.kimi.com/install.sh | bash (Windows: iwr https://code.kimi.com/install.ps1 | iex)" },
     ],
   },

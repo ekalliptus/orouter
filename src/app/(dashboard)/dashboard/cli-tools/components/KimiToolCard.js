@@ -177,15 +177,16 @@ export default function KimiToolCard({
     // model = "cc/claude-opus-5"". Matches the backend's serialize escape (\" ).
     const esc = (s) => String(s ?? "").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 
-    // Kimi Code schema (per Moonshot docs): a custom OpenAI-compatible endpoint needs a
-    // [providers.<id>] transport block (type = "openai_legacy") AND a [models.<id>] block
-    // linking a model to that provider. type must be "openai_legacy" (Chat Completions),
-    // NOT "openai". A bare `model` key inside [providers.*] is ignored -> "No models configured".
+    // Kimi Code schema (verified via `kimi doctor` v0.31.1): a custom OpenAI-compatible
+    // endpoint needs a [providers.<id>] transport block (type = "openai") AND a [models.<id>]
+    // block linking a model to that provider. Valid provider types are:
+    // anthropic|openai|kimi|google-genai|openai_responses|vertexai. A bare `model` key
+    // inside [providers.*] is ignored -> "No models configured".
     const model = selectedModel || "cc/claude-opus-5";
     const modelId = String(model).replace(/^[a-zA-Z0-9]+\//, "").replace(/[^a-zA-Z0-9._-]/g, "-").toLowerCase() || "9router-model";
 
     const tomlContent = `[providers.9router]
-type = "openai_legacy"
+type = "openai"
 base_url = "${esc(getEffectiveBaseUrl())}"
 api_key = "${esc(keyToUse)}"
 
