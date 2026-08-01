@@ -172,11 +172,16 @@ export default function KimiToolCard({
       ? selectedApiKey
       : (!cloudEnabled ? "sk_9router" : "<API_KEY_FROM_DASHBOARD>");
 
+    // Escape double-quotes for TOML basic strings, so a model/key/baseUrl value that
+    // happens to contain a quote (e.g. from a paste) doesn't produce invalid TOML like
+    // model = "cc/claude-opus-5"". Matches the backend's serialize escape (\" ).
+    const esc = (s) => String(s ?? "").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+
     const tomlContent = `[providers.9router]
 type = "openai"
-base_url = "${getEffectiveBaseUrl()}"
-api_key = "${keyToUse}"
-model = "${selectedModel || "provider/model-id"}"
+base_url = "${esc(getEffectiveBaseUrl())}"
+api_key = "${esc(keyToUse)}"
+model = "${esc(selectedModel || "provider/model-id")}"
 `;
 
     return [
