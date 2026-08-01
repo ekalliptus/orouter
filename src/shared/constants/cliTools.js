@@ -337,6 +337,28 @@ amp --model "{{model}}"
       { type: "warning", text: "Config path: Linux/macOS ~/.deepseek/config.toml • Windows %USERPROFILE%\\.deepseek\\config.toml" },
     ],
   },
+  kimi: {
+    id: "kimi",
+    name: "Kimi CLI",
+    image: "/providers/kimi-coding.png",
+    color: "#1E3A8A",
+    description: "Moonshot AI Kimi Code CLI — terminal coding agent",
+    docsUrl: "https://moonshotai.github.io/kimi-cli/",
+    configType: "custom",
+    defaultCommand: "kimi",
+    modelAliases: ["kimi-k3", "k3", "kimi-for-coding", "kimi-for-coding-highspeed", "kimi-k2.7-code", "kimi-k2.6"],
+    defaultModels: [
+      { id: "kimi-k3", name: "Kimi K3", alias: "kimi-k3" },
+      { id: "k3", name: "Kimi K3 (Code)", alias: "k3" },
+      { id: "kimi-for-coding", name: "Kimi for Coding", alias: "kimi-for-coding" },
+      { id: "kimi-k2.7-code", name: "Kimi K2.7 Code", alias: "kimi-k2.7-code" },
+      { id: "kimi-k2.6", name: "Kimi K2.6", alias: "kimi-k2.6" },
+    ],
+    notes: [
+      { type: "info", text: "Kimi Code CLI uses ~/.kimi-code/config.toml (also checks ~/.kimi-cli/config.toml for the older kimi-cli). 9Router registers as an OpenAI-compatible provider." },
+      { type: "warning", text: "Install: npm i -g @moonshot-ai/kimi-code OR curl -LsSf https://code.kimi.com/install.sh | bash (Windows: iwr https://code.kimi.com/install.ps1 | iex)" },
+    ],
+  },
   jcode: {
     id: "jcode",
     name: "jcode",

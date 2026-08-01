@@ -9,7 +9,7 @@ import {
   ClaudeToolCard, CodexToolCard, DroidToolCard, OpenClawToolCard,
   HermesToolCard, DefaultToolCard, OpenCodeToolCard, CoworkToolCard,
   CopilotToolCard, ClineToolCard, KiloToolCard, DeepSeekTuiToolCard,
-  JcodeToolCard, GrokBuildToolCard,
+  KimiToolCard, JcodeToolCard, GrokBuildToolCard,
 } from "../components";
 
 const CLOUD_URL = process.env.NEXT_PUBLIC_CLOUD_URL;
@@ -137,6 +137,8 @@ export default function ToolDetailClient({ toolId, machineId }) {
         return <KiloToolCard {...commonProps} activeProviders={getActiveProviders()} cloudEnabled={cloudEnabled} />;
       case "deepseek-tui":
         return <DeepSeekTuiToolCard {...commonProps} activeProviders={getActiveProviders()} hasActiveProviders={hasActiveProviders} cloudEnabled={cloudEnabled} />;
+      case "kimi":
+        return <KimiToolCard {...commonProps} activeProviders={getActiveProviders()} hasActiveProviders={hasActiveProviders} cloudEnabled={cloudEnabled} />;
       case "jcode":
         return <JcodeToolCard {...commonProps} activeProviders={getActiveProviders()} hasActiveProviders={hasActiveProviders} cloudEnabled={cloudEnabled} />;
       case "grok-build":
