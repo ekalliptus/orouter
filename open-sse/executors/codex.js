@@ -1,7 +1,6 @@
 import { BaseExecutor } from "./base.js";
 import { CODEX_DEFAULT_INSTRUCTIONS } from "../config/codexInstructions.js";
 import { PROVIDERS } from "../config/providers.js";
-import { getRequestContext, setRequestContext } from "./requestContext.js";
 import {
   refreshProviderCredentials,
   shouldRefreshCredentials,
@@ -9,6 +8,7 @@ import {
 import { normalizeResponsesInput } from "../translator/formats/responsesApi.js";
 import { fetchImageAsBase64 } from "../translator/concerns/image.js";
 import { getModelUpstreamId } from "../config/providerModels.js";
+import { getThinkingLevels } from "../providers/thinkingLevels.js";
 import { DEFAULT_RETRY_CONFIG, HTTP_STATUS, resolveRetryEntry } from "../config/runtimeConfig.js";
 import { dbg } from "../utils/debugLog.js";
 import { resolveSessionId } from "../utils/sessionManager.js";
@@ -125,8 +125,12 @@ function resolveCacheSessionId(body, credentials) {
   });
 }
 
-function normalizeReasoningEffort(value) {
-  return value === "max" ? "xhigh" : value;
+function normalizeReasoningEffort(model, value) {
+  const supportedLevels = getThinkingLevels("codex", model);
+  if (supportedLevels?.includes(value)) return value;
+  if (value === "ultra" && supportedLevels?.includes("max")) return "max";
+  if (value === "max" || value === "ultra") return "xhigh";
+  return value;
 }
 
 function findNestedMessage(value, depth = 0) {
@@ -188,19 +192,16 @@ function codexSseErrorResponse(status, message) {
 export class CodexExecutor extends BaseExecutor {
   constructor() {
     super("codex", PROVIDERS.codex);
-    // NOTE: per-request state (compact flag, session id) lives in the AsyncLocalStorage
-    // request context (requestContext.js), NOT on `this`. This executor is a singleton shared
-    // across concurrent requests, so instance fields would cross-contaminate.
+    this._currentSessionId = null;
   }
 
   /**
    * Override headers to add codex-specific identity headers.
-   * transformRequest runs BEFORE buildHeaders and stores the session id in the request context.
+   * transformRequest runs BEFORE buildHeaders, sets this._currentSessionId.
    */
   buildHeaders(credentials, stream = true) {
     const headers = super.buildHeaders(credentials, stream);
-    const ctx = getRequestContext();
-    headers["session_id"] = ctx.currentSessionId || credentials?.connectionId || "default";
+    headers["session_id"] = this._currentSessionId || credentials?.connectionId || "default";
     // Identify client type to Codex backend (matches official codex CLI)
     if (!headers["originator"]) headers["originator"] = "codex_cli_rs";
     // Account/workspace binding header — required when multiple Codex accounts
@@ -220,7 +221,7 @@ export class CodexExecutor extends BaseExecutor {
 
   buildUrl(model, stream, urlIndex = 0, credentials = null) {
     const base = super.buildUrl(model, stream, urlIndex, credentials);
-    return getRequestContext().isCompact ? `${base}/compact` : base;
+    return this._isCompact ? `${base}/compact` : base;
   }
 
   async refreshCredentials(credentials, log) {
@@ -338,31 +339,23 @@ export class CodexExecutor extends BaseExecutor {
 
     reader.releaseLock();
 
-    // Re-assemble stream: prefix chunks + remaining upstream body. The upstream reader is acquired
-    // LAZILY in pull()/cancel(), NOT in start(). Acquiring it eagerly in start() locked the body
-    // immediately: on the overloaded-retry path the replacementBody was discarded unused, yet its
-    // start() had already grabbed a reader, so result.response.body.cancel() then threw "cannot
-    // cancel a stream with an active reader" (swallowed) and the upstream socket leaked until GC.
-    // Lazy acquisition means an unconsumed replacementBody holds no reader and can be dropped freely.
+    // Re-assemble stream: prefix chunks + remaining upstream body
     const upstream = response.body;
     let upstreamReader = null;
-    function getUpstreamReader() {
-      if (!upstreamReader) upstreamReader = upstream.getReader();
-      return upstreamReader;
-    }
     const replacementBody = new ReadableStream({
       start(controller) {
         for (const c of chunks) controller.enqueue(c);
+        upstreamReader = upstream.getReader();
       },
       async pull(controller) {
         try {
-          const { done, value } = await getUpstreamReader().read();
+          const { done, value } = await upstreamReader.read();
           if (done) { controller.close(); return; }
           controller.enqueue(value);
         } catch (e) { controller.error(e); }
       },
       cancel(reason) {
-        try { getUpstreamReader().cancel(reason); } catch { /* noop */ }
+        try { upstreamReader?.cancel(reason); } catch { /* noop */ }
       },
     });
     return { matched: null, message: null, accountFallback: false, replacementBody };
@@ -398,11 +391,10 @@ export class CodexExecutor extends BaseExecutor {
    * Image fetching is handled separately in prefetchImages() so this stays sync.
    */
   transformRequest(model, body, stream, credentials) {
-    setRequestContext({ isCompact: !!body._compact });
+    this._isCompact = !!body._compact;
     delete body._compact;
     // Resolve conversation-stable session_id (priority: body → assistant-text → workspace → machine)
-    const currentSessionId = resolveCacheSessionId(body, credentials);
-    setRequestContext({ currentSessionId });
+    this._currentSessionId = resolveCacheSessionId(body, credentials);
     // Convert string input to array format (Codex API requires input as array)
     const normalized = normalizeResponsesInput(body.input);
     if (normalized) body.input = normalized;
@@ -431,8 +423,8 @@ export class CodexExecutor extends BaseExecutor {
     body.store = false;
 
     // Inject prompt_cache_key for stable Codex prompt caching
-    if (!body.prompt_cache_key && currentSessionId) {
-      body.prompt_cache_key = currentSessionId;
+    if (!body.prompt_cache_key && this._currentSessionId) {
+      body.prompt_cache_key = this._currentSessionId;
     }
 
     // Map virtual Codex review models to the upstream Codex model before suffix parsing.
@@ -453,10 +445,10 @@ export class CodexExecutor extends BaseExecutor {
 
     // Priority: explicit reasoning.effort > reasoning_effort param > model suffix > default (medium)
     if (!body.reasoning) {
-      const effort = normalizeReasoningEffort(body.reasoning_effort || modelEffort || 'low');
+      const effort = normalizeReasoningEffort(body.model, body.reasoning_effort || modelEffort || 'low');
       body.reasoning = { effort, summary: "auto" };
     } else {
-      body.reasoning.effort = normalizeReasoningEffort(body.reasoning.effort);
+      body.reasoning.effort = normalizeReasoningEffort(body.model, body.reasoning.effort);
       if (!body.reasoning.summary) body.reasoning.summary = "auto";
     }
     delete body.reasoning_effort;

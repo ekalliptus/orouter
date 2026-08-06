@@ -90,7 +90,7 @@ try { ensureTrayRuntime({ silent: true }); } catch {}
 
 // Configuration constants
 const APP_NAME = pkg.name; // Use from package.json
-const INSTALL_CMD_LATEST = `bun i -g ${APP_NAME}@latest`;
+const INSTALL_CMD_LATEST = `npm i -g ${APP_NAME}@latest --prefer-online`;
 
 const DEFAULT_PORT = 20128;
 const DEFAULT_HOST = "0.0.0.0";
@@ -534,7 +534,7 @@ const serverPath = fs.existsSync(customServerPath)
 
 if (!fs.existsSync(serverPath)) {
   console.error("Error: Standalone build not found.");
-  console.error("Please run 'bun run build' first.");
+  console.error("Please run 'npm run build:cli' first.");
   process.exit(1);
 }
 
@@ -592,28 +592,7 @@ async function showInterfaceMenu(latestVersion) {
 const MAX_RESTARTS = 2;
 const RESTART_RESET_MS = 30000; // Reset counter if alive > 30s
 
-function nativeBackendPath() {
-  if (process.platform === "win32") return null; // ponytail: add after signing the Windows binary
-  const arch = process.arch === "x64" ? "amd64" : process.arch;
-  const candidate = path.join(standaloneDir, "bin", `${process.platform}-${arch}`, "9router-backend");
-  return fs.existsSync(candidate) ? candidate : null;
-}
-
-function findFreePort(startPort) {
-  return new Promise((resolve, reject) => {
-    let candidate = startPort;
-    const probe = () => {
-      if (candidate >= startPort + MAX_PORT_ATTEMPTS) return reject(new Error("No free internal port"));
-      const server = require("net").createServer();
-      server.once("error", () => { candidate++; probe(); });
-      server.once("listening", () => server.close(() => resolve(candidate)));
-      server.listen(candidate, "127.0.0.1");
-    };
-    probe();
-  });
-}
-
-async function startServer(updatePromise) {
+function startServer(updatePromise) {
   // Accept either a Promise (parallel update check) or a resolved value.
   const latestVersionPromise = Promise.resolve(updatePromise);
   const displayHost = getDisplayHost();
@@ -626,24 +605,13 @@ async function startServer(updatePromise) {
 
   let restartCount = 0;
   let serverStartTime = Date.now();
-  const backendPath = nativeBackendPath();
-  const nodePort = backendPath ? await findFreePort(port + 1) : port;
 
   const CRASH_LOG_LINES = 50;
   let crashLog = [];
-  let nodeServer = null;
 
-  function captureCrashLog(child) {
-    if (!showLog && child?.stderr) {
-      child.stderr.on("data", (data) => {
-        const lines = data.toString().split("\n").filter(Boolean);
-        crashLog.push(...lines);
-        if (crashLog.length > CRASH_LOG_LINES) crashLog = crashLog.slice(-CRASH_LOG_LINES);
-      });
-    }
-  }
-
-  function spawnNodeServer() {
+  function spawnServer() {
+    serverStartTime = Date.now();
+    crashLog = [];
     const child = spawn(RUNTIME, ["--dns-result-order=ipv4first", "--max-old-space-size=6144", serverPath], {
       cwd: standaloneDir,
       stdio: showLog ? "inherit" : ["ignore", "ignore", "pipe"],
@@ -651,40 +619,21 @@ async function startServer(updatePromise) {
       windowsHide: true,
       env: {
         ...buildEnvWithRuntime(process.env),
-        PORT: nodePort.toString(),
-        HOSTNAME: backendPath ? "127.0.0.1" : host
+        PORT: port.toString(),
+        HOSTNAME: host
       }
     });
-    captureCrashLog(child);
+    if (!showLog && child.stderr) {
+      child.stderr.on("data", (data) => {
+        const lines = data.toString().split("\n").filter(Boolean);
+        crashLog.push(...lines);
+        if (crashLog.length > CRASH_LOG_LINES) crashLog = crashLog.slice(-CRASH_LOG_LINES);
+      });
+    }
     return child;
   }
 
-  function spawnServer() {
-    serverStartTime = Date.now();
-    crashLog = [];
-    if (!backendPath) return spawnNodeServer();
-    const child = spawn(backendPath, [], {
-      cwd: standaloneDir,
-      stdio: showLog ? "inherit" : ["ignore", "ignore", "pipe"],
-      detached: true,
-      windowsHide: true,
-      env: {
-        ...process.env,
-        GO_PORT: port.toString(),
-        GO_HOST: host,
-        NODE_UPSTREAM: `http://127.0.0.1:${nodePort}`,
-      }
-    });
-    captureCrashLog(child);
-    return child;
-  }
-
-  nodeServer = spawnNodeServer();
-  if (backendPath && !(await waitServerReady(nodePort))) {
-    try { process.kill(-nodeServer.pid, "SIGKILL"); } catch {}
-    throw new Error(`Node engine failed to start on internal port ${nodePort}`);
-  }
-  let server = backendPath ? spawnServer() : nodeServer;
+  let server = spawnServer();
 
   // Cleanup function - force kill server process
   let isCleaningUp = false;
@@ -701,12 +650,12 @@ async function startServer(updatePromise) {
       killProxyByPidFile();
       // Kill cloudflared/tailscale via PID file (only this app's tunnel)
       killTunnelByPidFile();
-      // Stop Go front door first, then the loopback Node engine.
-      for (const child of new Set([server, nodeServer])) {
-        if (!child?.pid) continue;
-        try { process.kill(child.pid, "SIGTERM"); } catch {}
-        try { process.kill(-child.pid, "SIGTERM"); } catch {}
+      // Kill server process directly
+      if (server.pid) {
+        process.kill(server.pid, "SIGKILL");
       }
+      // Also try to kill process group
+      process.kill(-server.pid, "SIGKILL");
     } catch (e) { }
   }
 
@@ -836,7 +785,7 @@ async function startServer(updatePromise) {
           // Windows/Linux: spawn detached bgProcess (systray works fine in child)
           console.log(`\n⏳ Starting background process... (tray icon will appear in ~3s)`);
 
-          const bgProcess = spawn(process.execPath, [__filename, "--tray", "--skip-update", "-p", port.toString()], {
+          const bgProcess = spawn(process.execPath, ["--dns-result-order=ipv4first", __filename, "--tray", "--skip-update", "-p", port.toString()], {
             detached: true,
             stdio: "ignore",
             windowsHide: true,
@@ -883,14 +832,26 @@ async function startServer(updatePromise) {
 
   function tryRestart(code) {
     const aliveMs = Date.now() - serverStartTime;
+    // Reset counter if last run was stable
     if (aliveMs >= RESTART_RESET_MS) restartCount = 0;
-    restartCount++;
-    if (restartCount > MAX_RESTARTS) {
-      console.error(`\n⚠️  Server crashed ${MAX_RESTARTS} times. Exiting.`);
-      cleanup();
-      process.exit(code || 1);
+
+    if (restartCount >= MAX_RESTARTS) {
+      console.error(`\n⚠️  Server crashed ${MAX_RESTARTS} times. Disabling MIT and restarting...`);
+      try {
+        const dbPath = path.join(os.homedir(), process.platform === "win32" ? path.join("AppData", "Roaming", "9router", "db.json") : path.join(".9router", "db.json"));
+        if (fs.existsSync(dbPath)) {
+          const db = JSON.parse(fs.readFileSync(dbPath, "utf-8"));
+          if (db.settings) db.settings.mitmEnabled = false;
+          fs.writeFileSync(dbPath, JSON.stringify(db, null, 2));
+        }
+      } catch { /* best effort */ }
+      restartCount = 0;
+      server = spawnServer();
+      attachServerEvents();
       return;
     }
+
+    restartCount++;
     const delay = Math.min(1000 * restartCount, 10000);
     console.error(`\n⚠️  Server exited (code=${code ?? "unknown"}). Restarting in ${delay / 1000}s... (${restartCount}/${MAX_RESTARTS})`);
     if (crashLog.length) {
@@ -898,20 +859,12 @@ async function startServer(updatePromise) {
       crashLog.forEach(l => console.error(l));
       console.error("--- End crash log ---\n");
     }
+
     setTimeout(() => {
-      if (backendPath && (!nodeServer || nodeServer.exitCode !== null)) nodeServer = spawnNodeServer();
-      server = backendPath ? spawnServer() : nodeServer;
+      server = spawnServer();
       attachServerEvents();
     }, delay);
   }
 
   attachServerEvents();
-  if (backendPath) {
-    nodeServer.on("close", (code) => {
-      if (isShuttingDown) return;
-      console.error(`Node engine exited (code=${code ?? "unknown"}).`);
-      cleanup();
-      process.exit(code || 1);
-    });
-  }
 }

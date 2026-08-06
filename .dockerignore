@@ -13,7 +13,6 @@ out
 build
 dist
 coverage
-bin
 
 # Runtime data and logs
 data

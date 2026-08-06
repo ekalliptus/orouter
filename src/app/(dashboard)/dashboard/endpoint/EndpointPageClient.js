@@ -4,7 +4,6 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import PropTypes from "prop-types";
 import { Card, Button, Input, Modal, CardSkeleton, Toggle, ConfirmModal } from "@/shared/components";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
-import useSettingsStore from "@/store/settingsStore";
 import {
   TUNNEL_BENEFITS,
   TUNNEL_PING_INTERVAL_MS,
@@ -26,7 +25,7 @@ export default function APIPageClient({ machineId }) {
   const [createdKey, setCreatedKey] = useState(null);
   const [confirmState, setConfirmState] = useState(null);
 
-  const [requireApiKey, setRequireApiKey] = useState(true);
+  const [requireApiKey, setRequireApiKey] = useState(false);
   const [requireLogin, setRequireLogin] = useState(true);
   const [hasPassword, setHasPassword] = useState(true);
  const [tunnelDashboardAccess, setTunnelDashboardAccess] = useState(false);
@@ -86,7 +85,6 @@ export default function APIPageClient({ machineId }) {
   }, []);
 
   const { copied, copy } = useCopyToClipboard();
-  const fetchSettings = useSettingsStore((state) => state.fetchSettings);
 
   // Security gate: block remote exposure while dashboard uses default password or login is off.
   const isLoginUnsafe = !requireLogin || !hasPassword;
@@ -196,15 +194,16 @@ export default function APIPageClient({ machineId }) {
   const loadSettings = async () => {
     setTunnelChecking(true);
     try {
-      const [settings, statusRes] = await Promise.all([
-        fetchSettings(),
+      const [settingsRes, statusRes] = await Promise.all([
+        fetch("/api/settings"),
         fetch("/api/tunnel/status", { cache: "no-store" })
       ]);
-      if (settings) {
-        setRequireApiKey(settings.requireApiKey !== false);
-        setRequireLogin(settings.requireLogin !== false);
-        setHasPassword(settings.hasPassword || false);
-        setTunnelDashboardAccess(settings.tunnelDashboardAccess || false);
+      if (settingsRes.ok) {
+        const data = await settingsRes.json();
+        setRequireApiKey(data.requireApiKey || false);
+        setRequireLogin(data.requireLogin !== false);
+        setHasPassword(data.hasPassword || false);
+        setTunnelDashboardAccess(data.tunnelDashboardAccess || false);
       }
       if (statusRes.ok) {
         const data = await statusRes.json();
@@ -256,11 +255,26 @@ export default function APIPageClient({ machineId }) {
 
   const fetchData = async () => {
     try {
-      const keysRes = await fetch("/api/keys");
-      const keysData = await keysRes.json();
-      if (keysRes.ok) {
-        setKeys(keysData.keys || []);
+      const fetchKeys = async () => {
+        const res = await fetch("/api/keys");
+        if (!res.ok) return [];
+        const data = await res.json();
+        return data.keys || [];
+      };
+
+      let existing = await fetchKeys();
+      // Auto-provision a default key for first-time users so the endpoint works out of the box.
+      if (existing.length === 0) {
+        try {
+          const createRes = await fetch("/api/keys", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: "Default Key" }),
+          });
+          if (createRes.ok) existing = await fetchKeys();
+        } catch { /* fall through to empty render */ }
       }
+      setKeys(existing);
     } catch (error) {
       console.log("Error fetching data:", error);
     } finally {
@@ -1006,7 +1020,7 @@ export default function APIPageClient({ machineId }) {
                     </code>
                     <button
                       onClick={() => toggleKeyVisibility(key.id)}
-                      className="p-1 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all"
+                      className="p-1 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary transition-all"
                       title={visibleKeys.has(key.id) ? "Hide key" : "Show key"}
                     >
                       <span className="material-symbols-outlined text-[14px]">
@@ -1015,7 +1029,7 @@ export default function APIPageClient({ machineId }) {
                     </button>
                     <button
                       onClick={() => copy(key.key, key.id)}
-                      className="p-1 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all"
+                      className="p-1 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary transition-all"
                     >
                       <span className="material-symbols-outlined text-[14px]">
                         {copied === key.id ? "check" : "content_copy"}
@@ -1146,7 +1160,7 @@ export default function APIPageClient({ machineId }) {
                   Cloudflare Tunnel
                 </p>
                 <p className="text-sm text-text-muted">
-                  Expose your local ORouter to the internet. No port forwarding, no static IP needed. Share endpoint URL with your team or use it in Cursor, Cline, and other AI tools from anywhere.
+                  Expose your local 9Router to the internet. No port forwarding, no static IP needed. Share endpoint URL with your team or use it in Cursor, Cline, and other AI tools from anywhere.
                 </p>
               </div>
             </div>

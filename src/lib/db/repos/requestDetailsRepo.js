@@ -15,10 +15,25 @@ async function getObservabilityConfig() {
   try {
     const { getSettings } = await import("./settingsRepo.js");
     const settings = await getSettings();
-    const envEnabled = process.env.OBSERVABILITY_ENABLED !== "false";
-    const enabled = typeof settings.enableObservability2 === "boolean"
-      ? settings.enableObservability2
-      : envEnabled;
+    const envRequestLogs = process.env.ENABLE_REQUEST_LOGS;
+    if (envRequestLogs !== undefined) {
+      const enabled = envRequestLogs.toLowerCase() === "true";
+      cachedConfig = {
+        enabled,
+        maxRecords: settings.observabilityMaxRecords || parseInt(process.env.OBSERVABILITY_MAX_RECORDS || String(DEFAULT_MAX_RECORDS), 10),
+        batchSize: settings.observabilityBatchSize || parseInt(process.env.OBSERVABILITY_BATCH_SIZE || String(DEFAULT_BATCH_SIZE), 10),
+        flushIntervalMs: settings.observabilityFlushIntervalMs || parseInt(process.env.OBSERVABILITY_FLUSH_INTERVAL_MS || String(DEFAULT_FLUSH_INTERVAL_MS), 10),
+        maxJsonSize: (settings.observabilityMaxJsonSize || parseInt(process.env.OBSERVABILITY_MAX_JSON_SIZE || "5", 10)) * 1024,
+      };
+      cachedConfigTs = Date.now();
+      return cachedConfig;
+    }
+    const envFallback = process.env.OBSERVABILITY_ENABLED !== "false";
+    const uiFlag = typeof settings.enableObservability === "boolean";
+    const enabled = uiFlag
+      ? settings.enableObservability
+      : envFallback;
+
     cachedConfig = {
       enabled,
       maxRecords: settings.observabilityMaxRecords || parseInt(process.env.OBSERVABILITY_MAX_RECORDS || String(DEFAULT_MAX_RECORDS), 10),
@@ -73,71 +88,51 @@ async function flushToDatabase() {
   if (writeBuffer.length === 0) return;
   isFlushing = true;
   try {
-    const db = await getAdapter();
-    const config = await getObservabilityConfig();
-
-    // Drain the buffer in batches. IMPORTANT: take a snapshot of the current items WITHOUT
-    // removing them from the buffer first — splice used to run before the transaction, so a
-    // failure (disk full, constraint error) silently dropped every record in the batch with no
-    // retry. Now we only splice after the batch commits; on failure we leave the items buffered
-    // so the next flush (timer or threshold) retries them.
+    // Drain entire buffer (loop in case more pushed during await)
     while (writeBuffer.length > 0) {
-      const batch = writeBuffer.slice(0, writeBuffer.length);
-      let committed = false;
-      try {
-        db.transaction(() => {
-          for (const item of batch) {
-            if (!item.id) item.id = generateDetailId(item.model);
-            if (!item.timestamp) item.timestamp = new Date().toISOString();
-            if (item.request?.headers) item.request.headers = sanitizeHeaders(item.request.headers);
+      const items = writeBuffer.splice(0, writeBuffer.length);
+      const db = await getAdapter();
+      const config = await getObservabilityConfig();
 
-            const record = {
-              id: item.id,
-              provider: item.provider || null,
-              model: item.model || null,
-              connectionId: item.connectionId || null,
-              timestamp: item.timestamp,
-              status: item.status || null,
-              latency: item.latency || {},
-              tokens: item.tokens || {},
-              request: truncateField(item.request, config.maxJsonSize),
-              providerRequest: truncateField(item.providerRequest, config.maxJsonSize),
-              providerResponse: truncateField(item.providerResponse, config.maxJsonSize),
-              response: truncateField(item.response, config.maxJsonSize),
-              pxpipe: item.pxpipe || undefined,
-            };
+      db.transaction(() => {
+        for (const item of items) {
+          if (!item.id) item.id = generateDetailId(item.model);
+          if (!item.timestamp) item.timestamp = new Date().toISOString();
+          if (item.request?.headers) item.request.headers = sanitizeHeaders(item.request.headers);
 
-            db.run(
-              `INSERT INTO requestDetails(id, timestamp, provider, model, connectionId, status, data) VALUES(?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET timestamp = excluded.timestamp, provider = excluded.provider, model = excluded.model, connectionId = excluded.connectionId, status = excluded.status, data = excluded.data`,
-              [record.id, record.timestamp, record.provider, record.model, record.connectionId, record.status, stringifyJson(record)]
-            );
-          }
+          const record = {
+            id: item.id,
+            provider: item.provider || null,
+            model: item.model || null,
+            connectionId: item.connectionId || null,
+            timestamp: item.timestamp,
+            status: item.status || null,
+            latency: item.latency || {},
+            tokens: item.tokens || {},
+            request: truncateField(item.request, config.maxJsonSize),
+            providerRequest: truncateField(item.providerRequest, config.maxJsonSize),
+            providerResponse: truncateField(item.providerResponse, config.maxJsonSize),
+            response: truncateField(item.response, config.maxJsonSize),
+            pxpipe: item.pxpipe || undefined,
+          };
 
-          const cnt = db.get(`SELECT COUNT(*) as c FROM requestDetails`);
-          if (cnt && cnt.c > config.maxRecords) {
-            db.run(
-              `DELETE FROM requestDetails WHERE id IN (SELECT id FROM requestDetails ORDER BY timestamp ASC LIMIT ?)`,
-              [cnt.c - config.maxRecords]
-            );
-          }
-        });
-        committed = true;
-      } catch (e) {
-        console.error("[requestDetailsRepo] Batch write failed:", e);
-      }
+          db.run(
+            `INSERT INTO requestDetails(id, timestamp, provider, model, connectionId, status, data) VALUES(?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET timestamp = excluded.timestamp, provider = excluded.provider, model = excluded.model, connectionId = excluded.connectionId, status = excluded.status, data = excluded.data`,
+            [record.id, record.timestamp, record.provider, record.model, record.connectionId, record.status, stringifyJson(record)]
+          );
+        }
 
-      if (committed) {
-        // Remove exactly the committed batch from the front of the buffer. (More may have been
-        // pushed meanwhile; they remain for the next iteration / flush.)
-        writeBuffer.splice(0, batch.length);
-      } else {
-        // Batch failed: keep the items buffered and stop this flush to avoid a tight retry loop.
-        // The periodic flush timer or the next saveRequestDetail threshold will retry.
-        break;
-      }
+        const cnt = db.get(`SELECT COUNT(*) as c FROM requestDetails`);
+        if (cnt && cnt.c > config.maxRecords) {
+          db.run(
+            `DELETE FROM requestDetails WHERE id IN (SELECT id FROM requestDetails ORDER BY timestamp ASC LIMIT ?)`,
+            [cnt.c - config.maxRecords]
+          );
+        }
+      });
     }
   } catch (e) {
-    console.error("[requestDetailsRepo] flush failed:", e);
+    console.error("[requestDetailsRepo] Batch write failed:", e);
   } finally {
     isFlushing = false;
   }
@@ -145,7 +140,7 @@ async function flushToDatabase() {
 
 export async function saveRequestDetail(detail) {
   const config = await getObservabilityConfig();
-  if (!config.enabled) return;
+  if (!config.enabled) {return;}
 
   writeBuffer.push(detail);
 

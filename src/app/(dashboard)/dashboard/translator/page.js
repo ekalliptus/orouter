@@ -1,14 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { Card, Button, Skeleton } from "@/shared/components";
+import { Card, Button } from "@/shared/components";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import dynamic from "next/dynamic";
 
-const Editor = dynamic(() => import("@monaco-editor/react"), {
-  ssr: false,
-  loading: () => <Skeleton className="h-[400px] w-full rounded-none" />,
-});
+const Editor = dynamic(() => import("@monaco-editor/react"), { ssr: false });
 
 // 7 steps matching requestLogger files exactly
 const STEPS = [

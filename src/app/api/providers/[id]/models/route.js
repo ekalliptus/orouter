@@ -79,18 +79,6 @@ const createOpenAIModelsConfig = (url) => ({
   parseResponse: parseOpenAIStyleModels
 });
 
-const resolveQwenModelsUrl = (connection) => {
-  const fallback = "https://portal.qwen.ai/v1/models";
-  const raw = connection?.providerSpecificData?.resourceUrl;
-  if (!raw || typeof raw !== "string") return fallback;
-  const value = raw.trim();
-  if (!value) return fallback;
-  if (value.startsWith("http://") || value.startsWith("https://")) {
-    return `${value.replace(/\/$/, "")}/models`;
-  }
-  return `https://${value.replace(/\/$/, "")}/v1/models`;
-};
-
 const getStaticProviderModels = (providerId) =>
   getModelsByProviderId(providerId).map((model) => ({
     ...model,
@@ -156,14 +144,6 @@ const PROVIDER_MODELS_CONFIG = {
     authQuery: "key", // Use query param for API key
     parseResponse: (data) => data.models || []
   },
-  qwen: {
-    url: "https://portal.qwen.ai/v1/models",
-    method: "GET",
-    headers: { "Content-Type": "application/json" },
-    authHeader: "Authorization",
-    authPrefix: "Bearer ",
-    parseResponse: (data) => data.data || []
-  },
   codex: {
     customResolver: buildOAuthResolver({
       refreshFn: (conn) => refreshCodexToken(conn.refreshToken),
@@ -218,17 +198,6 @@ const PROVIDER_MODELS_CONFIG = {
   },
   openai: createOpenAIModelsConfig("https://api.openai.com/v1/models"),
   openrouter: createOpenAIModelsConfig("https://openrouter.ai/api/v1/models"),
-  agentrouter: {
-    url: "https://agentrouter.org/v1/models",
-    method: "GET",
-    headers: {
-      "Content-Type": "application/json",
-      "User-Agent": "cline/1.0.0 vscode-extension",
-    },
-    authHeader: "Authorization",
-    authPrefix: "Bearer ",
-    parseResponse: parseOpenAIStyleModels
-  },
   anthropic: {
     url: "https://api.anthropic.com/v1/models",
     method: "GET",
@@ -367,6 +336,7 @@ const PROVIDER_MODELS_CONFIG = {
     customResolver: async (connection) => {
       const credentials = {
         accessToken: connection.accessToken,
+        apiKey: connection.apiKey,
         refreshToken: connection.refreshToken,
         email: connection.email,
         displayName: connection.displayName,
@@ -582,9 +552,6 @@ export async function GET(request, { params }) {
 
     // Build request URL
     let url = config.url;
-    if (connection.provider === "qwen") {
-      url = resolveQwenModelsUrl(connection);
-    }
     if (config.authQuery) {
       url += `?${config.authQuery}=${token}`;
     }

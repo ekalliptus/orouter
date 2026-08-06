@@ -95,11 +95,7 @@ export default function ConnectionRow({ connection, proxyPools, isOAuth, isFirst
     .sort()[0] || null;
 
   useEffect(() => {
-    if (typeof document === "undefined") return undefined;
-    let interval = null;
-
     const checkCooldown = () => {
-      // Earliest FUTURE model lock determines whether a cooldown is active.
       const until = Object.entries(connection)
         .filter(([k]) => k.startsWith("modelLock_"))
         .map(([, v]) => v)
@@ -108,34 +104,12 @@ export default function ConnectionRow({ connection, proxyPools, isOAuth, isFirst
       setIsCooldown(!!until);
     };
 
-    const start = () => {
-      if (interval == null) {
-        checkCooldown();
-        interval = setInterval(checkCooldown, 1000);
-      }
-    };
-    const stop = () => {
-      if (interval) {
-        clearInterval(interval);
-        interval = null;
-      }
-    };
-    const onVisibility = () => {
-      // Pause the 1Hz cooldown re-check while the tab is hidden (no user to
-      // see it), and refresh immediately on focus so status isn't stale.
-      if (document.hidden) stop();
-      else start();
-    };
-
-    // Only poll while a cooldown actually exists — a provider with no active
-    // modelLock should not spin a 1Hz timer at all.
-    if (modelLockUntil) start();
-    document.addEventListener("visibilitychange", onVisibility);
+    checkCooldown();
+    const interval = modelLockUntil ? setInterval(checkCooldown, 1000) : null;
     return () => {
-      document.removeEventListener("visibilitychange", onVisibility);
-      stop();
+      if (interval) clearInterval(interval);
     };
-  }, [modelLockUntil, connection]);
+  }, [modelLockUntil]);
 
   // Determine effective status (override unavailable if cooldown expired)
   const effectiveStatus = (connection.testStatus === "unavailable" && !isCooldown)

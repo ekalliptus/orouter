@@ -37,7 +37,7 @@ export default function LoginPage() {
 
         if (res.ok) {
           const data = await res.json();
-          if (data.requireLogin === false) {
+          if (data.authenticated === true || data.requireLogin === false) {
             window.location.assign("/dashboard");
             return;
           }
@@ -124,68 +124,30 @@ export default function LoginPage() {
   // Show loading state while checking password
   if (hasPassword === null) {
     return (
-      <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-bg p-4">
-        <div className="landing-grid pointer-events-none absolute inset-0" aria-hidden="true" />
-        <div className="aurora-orb absolute -left-24 -top-24 size-[28rem] bg-emerald-400" aria-hidden="true" />
-        <div className="aurora-orb absolute -bottom-28 -right-20 size-[30rem] bg-brand-500" aria-hidden="true" />
-        <div className="aurora-glass-strong relative rounded-[22px] px-12 py-10 text-center">
-          <div className="mx-auto size-8 animate-spin rounded-full border-2 border-brand-500/25 border-b-brand-500" />
-          <p className="console-label mt-4">Initializing control plane</p>
+      <div className="min-h-screen flex items-center justify-center bg-bg p-4">
+        <div className="text-center">
+          <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+          <p className="text-text-muted mt-4">Loading...</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-bg p-4 sm:p-6 lg:p-8">
-      <div className="landing-grid pointer-events-none absolute inset-0" aria-hidden="true" />
-      <div className="aurora-orb absolute -left-24 -top-24 size-[28rem] bg-emerald-400" aria-hidden="true" />
-      <div className="aurora-orb absolute -bottom-28 -right-20 size-[30rem] bg-brand-500" aria-hidden="true" />
-      <main className="relative z-10 mx-auto grid min-h-[calc(100vh-2rem)] max-w-6xl overflow-hidden rounded-[24px] border border-border-subtle bg-bg/45 shadow-[var(--shadow-glass)] lg:min-h-[calc(100vh-4rem)] lg:grid-cols-[1.1fr_0.9fr]">
-        <section className="hidden border-r border-border-subtle bg-sidebar/45 p-10 lg:flex lg:flex-col lg:justify-center xl:p-14">
-          <p className="console-label mb-5">Control Plane</p>
-          <div className="mb-8 flex items-center gap-4">
-            <div className="flex size-12 items-center justify-center rounded-[14px] bg-gradient-to-br from-brand-400 to-brand-600 shadow-[var(--shadow-warm)]">
-              <span className="material-symbols-outlined text-2xl text-white">hub</span>
-            </div>
-            <div>
-              <h1 className="text-3xl font-semibold tracking-tight text-text-main">ORouter</h1>
-              <p className="console-label text-emerald-600 dark:text-emerald-400">Secure Gateway</p>
-            </div>
-          </div>
-          <h2 className="max-w-lg text-4xl font-semibold leading-tight tracking-[-0.03em] text-text-main xl:text-5xl">
-            Route AI infrastructure from one local control plane.
-          </h2>
-          <p className="mt-5 max-w-lg text-base leading-7 text-text-muted">
-            Connect providers, manage routing, and keep credentials under your control.
+    <div className="min-h-screen flex items-center justify-center bg-bg p-4 relative overflow-hidden">
+      {/* Faint grid background */}
+      <div className="landing-grid absolute inset-0 pointer-events-none" aria-hidden="true" />
+      <div className="relative z-10 w-full max-w-md">
+        <div className="text-center mb-8">
+          <h1 className="text-3xl font-bold text-primary mb-2">9Router</h1>
+          <p className="text-text-muted">
+            {authMode === "oidc" && oidcConfigured
+              ? "Sign in with your OIDC provider to access the dashboard"
+              : "Enter your password to access the dashboard"}
           </p>
-          <div className="mt-10 grid grid-cols-3 gap-3" aria-label="Platform capabilities">
-            {["LOCAL FIRST", "MULTI PROVIDER", "SELF HOSTED"].map((label) => (
-              <div key={label} className="rounded-[12px] border border-border-subtle bg-surface/55 p-3">
-                <span className="mb-3 block size-1.5 rounded-full bg-emerald-500" aria-hidden="true" />
-                <span className="console-label">{label}</span>
-              </div>
-            ))}
-          </div>
-        </section>
-        <section className="flex items-center justify-center p-4 sm:p-8 lg:p-10">
-          <Card elev className="w-full max-w-md rounded-[22px] p-6 sm:p-8">
-            <div className="mb-7 flex items-center justify-between border-b border-border-subtle pb-5">
-              <div className="traffic-lights" aria-hidden="true">
-                <span className="traffic-light red" />
-                <span className="traffic-light yellow" />
-                <span className="traffic-light green" />
-              </div>
-              <span className="console-label">Authorized Access</span>
-            </div>
-            <div className="mb-7">
-              <h1 className="text-2xl font-semibold tracking-tight text-text-main">ORouter</h1>
-              <p className="mt-2 text-sm text-text-muted">
-                {authMode === "oidc" && oidcConfigured
-                  ? "Sign in with your OIDC provider to access the dashboard"
-                  : "Enter your password to access the dashboard"}
-              </p>
-            </div>
+        </div>
+
+        <Card>
           {mustChange ? (
             <form onSubmit={handleSetNewPassword} className="flex flex-col gap-4">
               <p className="text-sm text-amber-600 dark:text-amber-400 text-center">
@@ -278,9 +240,8 @@ export default function LoginPage() {
             )}
           </div>
           )}
-          </Card>
-        </section>
-      </main>
+        </Card>
+      </div>
     </div>
   );
 }

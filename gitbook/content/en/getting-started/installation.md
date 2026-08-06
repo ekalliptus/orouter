@@ -34,7 +34,7 @@ npm --version
 Install 9Router globally to use from anywhere:
 
 ```bash
-bun install -g 9router
+npm install -g 9router
 ```
 
 **Start 9Router:**
@@ -55,13 +55,13 @@ Install in a specific project:
 ```bash
 mkdir my-9router
 cd my-9router
-bun add 9router
+npm install 9router
 ```
 
 **Start 9Router:**
 
 ```bash
-bunx 9router
+npx 9router
 ```
 
 **Benefits:**
@@ -76,8 +76,8 @@ Clone and build from GitHub:
 ```bash
 git clone https://github.com/decolua/9router.git
 cd 9router/app
-bun install
-bun run build
+npm install
+npm run build
 npm start
 ```
 
@@ -283,7 +283,7 @@ echo 'export PATH=~/.npm-global/bin:$PATH' >> ~/.bashrc
 source ~/.bashrc
 
 # Then install again
-bun install -g 9router
+npm install -g 9router
 ```
 
 ### Node.js Version Too Old
@@ -360,7 +360,7 @@ pkill -f 9router
 **Or use PM2 for auto-restart:**
 
 ```bash
-bun install -g pm2
+npm install -g pm2
 pm2 start 9router --name 9router
 pm2 save
 ```
@@ -372,7 +372,7 @@ pm2 save
 ### Local Development
 
 ```bash
-bun install -g 9router
+npm install -g 9router
 9router
 ```
 
@@ -382,7 +382,7 @@ bun install -g 9router
 
 ```bash
 # Install
-bun install -g 9router
+npm install -g 9router
 
 # Configure
 export JWT_SECRET="your-secure-secret"
@@ -390,7 +390,7 @@ export INITIAL_PASSWORD="your-password"
 export NODE_ENV="production"
 
 # Start with PM2
-bun install -g pm2
+npm install -g pm2
 pm2 start 9router --name 9router
 pm2 save
 pm2 startup

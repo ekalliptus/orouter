@@ -42,25 +42,26 @@
 
 ```
 ┌─────────────┐
-│  Your CLI   │  (Claude Code, Codex, Gemini CLI, OpenClaw, Cursor, Cline...)
+│  Your CLI   │  (Claude Code, Codex, OpenClaw, Cursor, Cline, Antigravity...)
 │   Tool      │
 └──────┬──────┘
-       │ http://localhost:201281
+       │ http://localhost:20128/v1
        ↓
-┌─────────────────────────────────────────┐
-│           9Router (Smart Router)        │
-│  • Format translation (OpenAI ↔ Claude) │
-│  • Quota tracking                       │
-│  • Auto token refresh                   │
-└──────┬──────────────────────────────────┘
+┌─────────────────────────────────────────────┐
+│           9Router (Smart Router)            │
+│  • RTK Token Saver (节省 20-40% Token)      │
+│  • 格式转换 (OpenAI ↔ Claude)               │
+│  • 配额追踪 (Quota tracking)                │
+│  • 自动刷新 OAuth Token                     │
+└──────┬──────────────────────────────────────┘
        │
-       ├─→ [Tier 1: SUBSCRIPTION] Claude Code, Codex, Gemini CLI
-       │   ↓ quota exhausted
-       ├─→ [Tier 2: CHEAP] GLM ($0.6/1M), MiniMax ($0.2/1M)
-       │   ↓ budget limit
-       └─→ [Tier 3: FREE] iFlow, Qwen, Kiro (unlimited)
+       ├─→ [Tier 1: 订阅] Claude Code, Codex, GitHub Copilot
+       │   ↓ 配额用尽
+       ├─→ [Tier 2: 低价] GLM ($0.6/1M), MiniMax ($0.2/1M)
+       │   ↓ 触及预算上限
+       └─→ [Tier 3: 免费] Kiro AI, OpenCode Free, Vertex AI ($300 credits)
 
-Result: Never stop coding, minimal cost
+结果：永不停歇的编程体验，最低成本 + 通过 RTK 节省 20-40% Token
 ```
 
 ---
@@ -70,7 +71,7 @@ Result: Never stop coding, minimal cost
 **1. 全局安装：**
 
 ```bash
-bun install -g 9router
+npm install -g 9router
 9router
 ```
 
@@ -97,15 +98,15 @@ Claude Code/Codex/Gemini CLI/OpenClaw/Cursor/Cline 设置:
 
 ```bash
 cp .env.example .env
-bun install
-PORT=20128 NEXT_PUBLIC_BASE_URL=http://localhost:20128 bun run dev
+npm install
+PORT=20128 NEXT_PUBLIC_BASE_URL=http://localhost:20128 npm run dev
 ```
 
 生产模式：
 
 ```bash
-bun run build
-PORT=20128 HOSTNAME=0.0.0.0 NEXT_PUBLIC_BASE_URL=http://localhost:20128 bun run start
+npm run build
+PORT=20128 HOSTNAME=0.0.0.0 NEXT_PUBLIC_BASE_URL=http://localhost:20128 npm run start
 ```
 
 默认 URL：
@@ -947,8 +948,8 @@ Model: cc/claudeus-4-6
 # Clone and install
 git clone https://github.com/decolua/9router.git
 cd 9router
-bun install
-bun run build
+npm install
+npm run build
 
 # Configure
 export JWT_SECRET="your-secure-secret-change-this"
@@ -963,11 +964,11 @@ export API_KEY_SECRET="endpoint-proxy-api-key-secret"
 export MACHINE_ID_SALT="endpoint-proxy-salt"
 
 # Start
-bun run start
+npm run start
 
 # Or use PM2
-bun install -g pm2
-pm2 start bun --name 9router -- start
+npm install -g pm2
+pm2 start npm --name 9router -- start
 pm2 save
 pm2 startup
 ```

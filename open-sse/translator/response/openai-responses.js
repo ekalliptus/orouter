@@ -121,24 +121,19 @@ export function openaiToOpenAIResponsesResponse(chunk, state) {
 // Helper functions
 function startReasoning(state, emit, idx) {
   if (!state.reasoningId) {
-    // Reasoning, message and function-call items must each occupy a UNIQUE output_index in the
-    // Responses stream. Previously all three derived their index from the Chat choice index (=0
-    // for a single-choice stream), so reasoning/text/tool collided on output_index 0 and
-    // downstream SDKs overwrote each other. Allocate a fresh monotonic index per opened item.
-    const outputIndex = state.outputIndex++;
     state.reasoningId = `rs_${state.responseId}_${idx}`;
-    state.reasoningIndex = outputIndex;
-
+    state.reasoningIndex = idx;
+    
     emit("response.output_item.added", {
       type: "response.output_item.added",
-      output_index: outputIndex,
+      output_index: idx,
       item: { id: state.reasoningId, type: RESPONSES_ITEM.REASONING, summary: [] }
     });
 
     emit("response.reasoning_summary_part.added", {
       type: "response.reasoning_summary_part.added",
       item_id: state.reasoningId,
-      output_index: outputIndex,
+      output_index: idx,
       summary_index: 0,
       part: { type: RESPONSES_ITEM.SUMMARY_TEXT, text: "" }
     });
@@ -161,7 +156,7 @@ function emitReasoningDelta(state, emit, text) {
 function closeReasoning(state, emit) {
   if (state.reasoningId && !state.reasoningDone) {
     state.reasoningDone = true;
-
+    
     emit("response.reasoning_summary_text.done", {
       type: "response.reasoning_summary_text.done",
       item_id: state.reasoningId,
@@ -187,40 +182,28 @@ function closeReasoning(state, emit) {
         summary: [{ type: RESPONSES_ITEM.SUMMARY_TEXT, text: state.reasoningBuf }]
       }
     });
-
-    // Reset reasoning state so a SECOND <think> block in the same turn opens its own reasoning
-    // item instead of being silently grafted onto the already-closed one (which produced a
-    // dangling, never-finalized reasoning item). The output_index counter keeps advancing, so the
-    // new reasoning item gets the next index.
-    state.reasoningId = "";
-    state.reasoningIndex = -1;
-    state.reasoningBuf = "";
-    state.reasoningDone = false;
-    state.reasoningPartAdded = false;
   }
 }
 
 function emitTextContent(state, emit, idx, content) {
   if (!state.msgItemAdded[idx]) {
     state.msgItemAdded[idx] = true;
-    // Allocate a unique monotonic output_index for the message item (see startReasoning note).
-    state.msgOutputIndex = state.outputIndex++;
-    state.msgId = `msg_${state.responseId}_${state.msgOutputIndex}`;
-
+    const msgId = `msg_${state.responseId}_${idx}`;
+    
     emit("response.output_item.added", {
       type: "response.output_item.added",
-      output_index: state.msgOutputIndex,
-      item: { id: state.msgId, type: RESPONSES_ITEM.MESSAGE, content: [], role: ROLE.ASSISTANT }
+      output_index: idx,
+      item: { id: msgId, type: RESPONSES_ITEM.MESSAGE, content: [], role: ROLE.ASSISTANT }
     });
   }
 
   if (!state.msgContentAdded[idx]) {
     state.msgContentAdded[idx] = true;
-
+    
     emit("response.content_part.added", {
       type: "response.content_part.added",
-      item_id: state.msgId,
-      output_index: state.msgOutputIndex,
+      item_id: `msg_${state.responseId}_${idx}`,
+      output_index: idx,
       content_index: 0,
       part: { type: RESPONSES_ITEM.OUTPUT_TEXT, annotations: [], logprobs: [], text: "" }
     });
@@ -228,8 +211,8 @@ function emitTextContent(state, emit, idx, content) {
 
   emit("response.output_text.delta", {
     type: "response.output_text.delta",
-    item_id: state.msgId,
-    output_index: state.msgOutputIndex,
+    item_id: `msg_${state.responseId}_${idx}`,
+    output_index: idx,
     content_index: 0,
     delta: content,
     logprobs: []
@@ -243,13 +226,12 @@ function closeMessage(state, emit, idx) {
   if (state.msgItemAdded[idx] && !state.msgItemDone[idx]) {
     state.msgItemDone[idx] = true;
     const fullText = state.msgTextBuf[idx] || "";
-    const msgId = state.msgId || `msg_${state.responseId}_${idx}`;
-    const outputIndex = state.msgOutputIndex ?? parseInt(idx);
+    const msgId = `msg_${state.responseId}_${idx}`;
 
     emit("response.output_text.done", {
       type: "response.output_text.done",
       item_id: msgId,
-      output_index: outputIndex,
+      output_index: parseInt(idx),
       content_index: 0,
       text: fullText,
       logprobs: []
@@ -258,14 +240,14 @@ function closeMessage(state, emit, idx) {
     emit("response.content_part.done", {
       type: "response.content_part.done",
       item_id: msgId,
-      output_index: outputIndex,
+      output_index: parseInt(idx),
       content_index: 0,
       part: { type: RESPONSES_ITEM.OUTPUT_TEXT, annotations: [], logprobs: [], text: fullText }
     });
 
     emit("response.output_item.done", {
       type: "response.output_item.done",
-      output_index: outputIndex,
+      output_index: parseInt(idx),
       item: {
         id: msgId,
         type: RESPONSES_ITEM.MESSAGE,
@@ -276,26 +258,43 @@ function closeMessage(state, emit, idx) {
   }
 }
 
+function isCustomTool(state, name) {
+  return !!name && state.customToolNames?.has(name);
+}
+
+function extractCustomToolInput(argumentsText) {
+  if (typeof argumentsText !== "string") return "";
+  try {
+    const parsed = JSON.parse(argumentsText);
+    if (parsed && typeof parsed === "object" && typeof parsed.input === "string") return parsed.input;
+  } catch { /* incomplete or raw freeform input */ }
+  return argumentsText;
+}
+
 function emitToolCall(state, emit, tc) {
   const tcIdx = tc.index ?? 0;
   const newCallId = tc.id;
   const funcName = tc.function?.name;
 
   if (funcName) state.funcNames[tcIdx] = funcName;
+  if (newCallId) state.funcCallIds[tcIdx] = newCallId;
 
-  if (!state.funcCallIds[tcIdx] && newCallId) {
-    state.funcCallIds[tcIdx] = newCallId;
-    // Allocate a unique monotonic output_index for this function-call item (see startReasoning).
-    if (state.funcOutputIndex[tcIdx] === undefined) state.funcOutputIndex[tcIdx] = state.outputIndex++;
+  // Some compatible providers split the call id and function name across
+  // chunks. Wait for both before deciding whether this is a custom tool;
+  // otherwise an `exec` call can be irreversibly announced as function_call.
+  const callId = state.funcCallIds[tcIdx];
+  if (!state.funcItemAdded[tcIdx] && callId && state.funcNames[tcIdx]) {
+    state.funcItemAdded[tcIdx] = true;
+    const custom = isCustomTool(state, state.funcNames[tcIdx]);
 
     emit("response.output_item.added", {
       type: "response.output_item.added",
-      output_index: state.funcOutputIndex[tcIdx],
+      output_index: tcIdx,
       item: {
-        id: `fc_${newCallId}`,
-        type: RESPONSES_ITEM.FUNCTION_CALL,
-        arguments: "",
-        call_id: newCallId,
+        id: `${custom ? "ctc" : "fc"}_${callId}`,
+        type: custom ? RESPONSES_ITEM.CUSTOM_TOOL_CALL : RESPONSES_ITEM.FUNCTION_CALL,
+        ...(custom ? { input: "" } : { arguments: "" }),
+        call_id: callId,
         name: state.funcNames[tcIdx] || ""
       }
     });
@@ -305,14 +304,17 @@ function emitToolCall(state, emit, tc) {
 
   if (tc.function?.arguments) {
     const refCallId = state.funcCallIds[tcIdx] || newCallId;
-    if (refCallId) {
+    if (state.funcItemAdded[tcIdx] && refCallId && !isCustomTool(state, state.funcNames[tcIdx])) {
       emit("response.function_call_arguments.delta", {
         type: "response.function_call_arguments.delta",
         item_id: `fc_${refCallId}`,
-        output_index: state.funcOutputIndex[tcIdx] ?? tcIdx,
+        output_index: tcIdx,
         delta: tc.function.arguments
       });
     }
+    // Custom input is emitted once at close, after the Chat JSON wrapper can be
+    // parsed and unwrapped. Streaming the raw JSON fragments would expose
+    // {"input":"..."} instead of the freeform program Codex expects.
     state.funcArgsBuf[tcIdx] += tc.function.arguments;
   }
 }
@@ -321,22 +323,38 @@ function closeToolCall(state, emit, idx) {
   const callId = state.funcCallIds[idx];
   if (callId && !state.funcItemDone[idx]) {
     const args = state.funcArgsBuf[idx] || "{}";
-    const outputIndex = state.funcOutputIndex[idx] ?? parseInt(idx);
+    const custom = isCustomTool(state, state.funcNames[idx]);
 
-    emit("response.function_call_arguments.done", {
-      type: "response.function_call_arguments.done",
-      item_id: `fc_${callId}`,
-      output_index: outputIndex,
-      arguments: args
-    });
+    if (custom) {
+      const input = extractCustomToolInput(args);
+      emit("response.custom_tool_call_input.delta", {
+        type: "response.custom_tool_call_input.delta",
+        item_id: `ctc_${callId}`,
+        output_index: parseInt(idx),
+        delta: input
+      });
+      emit("response.custom_tool_call_input.done", {
+        type: "response.custom_tool_call_input.done",
+        item_id: `ctc_${callId}`,
+        output_index: parseInt(idx),
+        input
+      });
+    } else {
+      emit("response.function_call_arguments.done", {
+        type: "response.function_call_arguments.done",
+        item_id: `fc_${callId}`,
+        output_index: parseInt(idx),
+        arguments: args
+      });
+    }
 
     emit("response.output_item.done", {
       type: "response.output_item.done",
-      output_index: outputIndex,
+      output_index: parseInt(idx),
       item: {
-        id: `fc_${callId}`,
-        type: RESPONSES_ITEM.FUNCTION_CALL,
-        arguments: args,
+        id: `${custom ? "ctc" : "fc"}_${callId}`,
+        type: custom ? RESPONSES_ITEM.CUSTOM_TOOL_CALL : RESPONSES_ITEM.FUNCTION_CALL,
+        ...(custom ? { input: extractCustomToolInput(args) } : { arguments: args }),
         call_id: callId,
         name: state.funcNames[idx] || ""
       }

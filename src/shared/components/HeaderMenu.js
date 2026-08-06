@@ -1,11 +1,9 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import dynamic from "next/dynamic";
 import PropTypes from "prop-types";
 import { useTheme } from "@/shared/hooks/useTheme";
-
-const ChangelogModal = dynamic(() => import("./ChangelogModal"), { ssr: false });
+import ChangelogModal from "./ChangelogModal";
 import { ConfirmModal } from "./Modal";
 
 function MenuItem({ icon, label, onClick, trailing, danger }) {

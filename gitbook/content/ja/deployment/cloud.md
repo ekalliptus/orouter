@@ -23,13 +23,13 @@ cd 9router/app
 ### ステップ2: 依存関係をインストール
 
 ```bash
-bun install
+npm install
 ```
 
 ### ステップ3: アプリケーションをビルド
 
 ```bash
-bun run build
+npm run build
 ```
 
 ### ステップ4: 環境変数を設定
@@ -63,7 +63,7 @@ sudo chown $USER:$USER /var/lib/9router
 ### ステップ6: アプリケーションを起動
 
 ```bash
-bun run start
+npm run start
 ```
 
 ### ステップ7: 本番環境用にPM2をセットアップ
@@ -72,10 +72,10 @@ PM2はアプリケーションを稼働させ続け、クラッシュ時に再�
 
 ```bash
 # PM2をグローバルにインストール
-bun install -g pm2
+npm install -g pm2
 
 # PM2で9Routerを起動
-pm2 start bun --name 9router -- start
+pm2 start npm --name 9router -- start
 
 # PM2設定を保存
 pm2 save
@@ -121,13 +121,13 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install dependencies
-RUN bun install --frozen-lockfile --production
+RUN npm ci --only=production
 
 # Copy application files
 COPY . .
 
 # Build application
-RUN bun run build
+RUN npm run build
 
 # Expose ports
 EXPOSE 3000 20128
@@ -366,8 +366,8 @@ sudo apt update && sudo apt upgrade -y
 # 9Routerを更新
 cd /path/to/9router/app
 git pull
-bun install
-bun run build
+npm install
+npm run build
 pm2 restart 9router
 ```
 

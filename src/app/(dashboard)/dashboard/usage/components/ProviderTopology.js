@@ -16,6 +16,7 @@ import { getProviderIconSrc, markProviderIconMissing } from "@/shared/utils/prov
 
 // Force-stop FE animation if a provider stays active longer than this
 const FE_ACTIVE_TIMEOUT_MS = 60000;
+const FE_ACTIVE_TICK_MS = 1000;
 
 // Kame + electric particles along active edges
 const KAME_PARTICLE_COUNT = 6;
@@ -93,7 +94,7 @@ ProviderNode.propTypes = {
   data: PropTypes.object.isRequired,
 };
 
-// Center ORouter node — pulse/glow on card only (no expanding rings)
+// Center 9Router node — pulse/glow on card only (no expanding rings)
 function RouterNode({ data }) {
   const powering = (data.activeCount || 0) > 0;
   return (
@@ -111,13 +112,13 @@ function RouterNode({ data }) {
 
       <img
         src="/favicon.svg"
-        alt="ORouter"
+        alt="9Router"
         className={`w-6 h-6 mr-2 ${powering ? "topology-router-icon" : ""}`}
         loading="lazy"
         decoding="async"
       />
       <span className={`text-sm font-bold ${powering ? "topology-router-label text-yellow-300" : "text-primary"}`}>
-        ORouter
+        9Router
       </span>
       {data.activeCount > 0 && (
         <span className="ml-2 px-1.5 py-0.5 rounded-full bg-yellow-400 text-black text-xs font-bold topology-router-badge">
@@ -258,10 +259,6 @@ TopologyEdge.propTypes = {
 const nodeTypes = { provider: ProviderNode, router: RouterNode };
 const edgeTypes = { topology: TopologyEdge };
 
-// Module-level immutable xyflow options avoid recreating objects per render.
-const FIT_VIEW_OPTIONS = { padding: 0.2, duration: 200 };
-const PRO_OPTIONS = { hideAttribution: true };
-
 // Place N nodes evenly along an ellipse around the router center.
 function buildLayout(providers, activeSet, lastSet, errorSet) {
   const nodeW = 180;
@@ -370,11 +367,9 @@ export default function ProviderTopology({ providers = [], activeRequests = [], 
   const lastSet = useMemo(() => new Set(lastKey ? [lastKey] : []), [lastKey]);
   const errorSet = useMemo(() => new Set(errorKey ? [errorKey] : []), [errorKey]);
 
-  // Track firstSeen per active provider; drop provider if running too long (BE stuck).
-  // Instead of re-rendering every second, schedule a single timeout for the
-  // nearest provider expiry so the component only commits when state changes.
+  // Track firstSeen per active provider; drop provider if running too long (BE stuck)
   const firstSeenRef = useRef({});
-  const [expiredKey, setExpiredKey] = useState(0);
+  const [tick, setTick] = useState(0);
 
   useEffect(() => {
     const seen = firstSeenRef.current;
@@ -388,19 +383,9 @@ export default function ProviderTopology({ providers = [], activeRequests = [], 
   }, [rawActiveSet]);
 
   useEffect(() => {
-    const seen = firstSeenRef.current;
-    if (rawActiveSet.size === 0) return undefined;
-    let earliest = Infinity;
-    for (const p of rawActiveSet) {
-      const ts = seen[p];
-      if (!ts) continue;
-      const expiry = ts + FE_ACTIVE_TIMEOUT_MS;
-      if (expiry < earliest) earliest = expiry;
-    }
-    if (!Number.isFinite(earliest)) return undefined;
-    const delay = Math.max(0, earliest - Date.now());
-    const id = setTimeout(() => setExpiredKey((k) => k + 1), delay);
-    return () => clearTimeout(id);
+    if (rawActiveSet.size === 0) return;
+    const id = setInterval(() => setTick((t) => t + 1), FE_ACTIVE_TICK_MS);
+    return () => clearInterval(id);
   }, [rawActiveSet]);
 
   const activeSet = useMemo(() => {
@@ -411,10 +396,7 @@ export default function ProviderTopology({ providers = [], activeRequests = [], 
       if (!ts || now - ts < FE_ACTIVE_TIMEOUT_MS) filtered.add(p);
     }
     return filtered;
-    // expiredKey forces one recompute at the nearest expiry, replacing the
-    // per-second ticking interval.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rawActiveSet, expiredKey]);
+  }, [rawActiveSet, tick]);
 
   const { nodes, edges } = useMemo(
     () => buildLayout(providers, activeSet, lastSet, errorSet),
@@ -429,35 +411,27 @@ export default function ProviderTopology({ providers = [], activeRequests = [], 
 
   const rfInstance = useRef(null);
   const containerRef = useRef(null);
+  const fitOpts = { padding: 0.2, duration: 200 };
   const onInit = useCallback((instance) => {
     rfInstance.current = instance;
-    setTimeout(() => instance.fitView(FIT_VIEW_OPTIONS), 50);
+    setTimeout(() => instance.fitView(fitOpts), 50);
   }, []);
 
-  // Re-fit on container resize, debounced via rAF so a burst of resize
-  // notifications only triggers one fitView.
+  // Re-fit on container resize
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
-    let raf = 0;
     const ro = new ResizeObserver(() => {
-      if (raf) return;
-      raf = requestAnimationFrame(() => {
-        raf = 0;
-        if (rfInstance.current) rfInstance.current.fitView(FIT_VIEW_OPTIONS);
-      });
+      if (rfInstance.current) rfInstance.current.fitView(fitOpts);
     });
     ro.observe(el);
-    return () => {
-      if (raf) cancelAnimationFrame(raf);
-      ro.disconnect();
-    };
+    return () => ro.disconnect();
   }, []);
 
   // Re-fit when node count/layout changes
   useEffect(() => {
     if (rfInstance.current) {
-      const id = setTimeout(() => rfInstance.current.fitView(FIT_VIEW_OPTIONS), 50);
+      const id = setTimeout(() => rfInstance.current.fitView(fitOpts), 50);
       return () => clearTimeout(id);
     }
   }, [nodes.length]);
@@ -476,11 +450,11 @@ export default function ProviderTopology({ providers = [], activeRequests = [], 
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
           fitView
-          fitViewOptions={FIT_VIEW_OPTIONS}
+          fitViewOptions={fitOpts}
           minZoom={0.1}
           maxZoom={2}
           onInit={onInit}
-          proOptions={PRO_OPTIONS}
+          proOptions={{ hideAttribution: true }}
           panOnDrag
           zoomOnScroll
           zoomOnPinch

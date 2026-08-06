@@ -5,7 +5,6 @@ import { extractUsage, mergeUsage, hasValidUsage, estimateUsage, logUsage, addBu
 import { parseSSELine, hasValuableContent, fixInvalidId, formatSSE } from "./streamHelpers.js";
 import { getOpenAIResponsesEventName, isOpenAIResponsesTerminalEvent, formatIncompleteOpenAIResponsesStreamFailure } from "./responsesStreamHelpers.js";
 import { dbg, isDebugEnabled } from "./debugLog.js";
-import { decloakParsedClaude } from "./claudeCloaking.js";
 
 import { SSE_DONE, SSE_HEADERS, SSE_HEADERS_NO_BUFFER } from "./sseConstants.js";
 
@@ -45,6 +44,7 @@ export function createSSEStream(options = {}) {
     provider = null,
     reqLogger = null,
     toolNameMap = null,
+    customToolNames = null,
     model = null,
     connectionId = null,
     body = null,
@@ -58,7 +58,9 @@ export function createSSEStream(options = {}) {
   // Per-stream decoder with stream:true to correctly handle multi-byte chars split across chunks
   const decoder = new TextDecoder("utf-8", { fatal: false });
 
-  const state = mode === STREAM_MODE.TRANSLATE ? { ...initState(sourceFormat), provider, toolNameMap, model } : null;
+  const state = mode === STREAM_MODE.TRANSLATE
+    ? { ...initState(sourceFormat), provider, toolNameMap, customToolNames: new Set(customToolNames || []), model }
+    : null;
 
   let totalContentLength = 0;
   let accumulatedContent = "";
@@ -107,20 +109,6 @@ export function createSSEStream(options = {}) {
           if (trimmed.startsWith("data:") && trimmed.slice(5).trim() !== "[DONE]") {
             try {
               const parsed = JSON.parse(trimmed.slice(5).trim());
-
-              // Decloak cloaked tool names (_ide suffix) in Claude passthrough
-              // responses. On the translate path this happens via the stream
-              // state's toolNameMap, but Claude→Claude same-format responses take
-              // THIS passthrough branch — both a streaming content_block_start
-              // event and a full message object (client omitted `stream` but
-              // internal streaming is on) flow through here. Without this, clients
-              // like ZCode see "get_weather_ide" and fail "Tool not found".
-              if (decloakParsedClaude(parsed, toolNameMap)) {
-                output = `data: ${JSON.stringify(parsed)}\n`;
-                reqLogger?.appendConvertedChunk?.(output);
-                controller.enqueue(sharedEncoder.encode(output));
-                continue;
-              }
 
               const idFixed = fixInvalidId(parsed);
 
@@ -363,21 +351,6 @@ export function createSSEStream(options = {}) {
             if (buffer.startsWith("data:") && !buffer.startsWith("data: ")) {
               output = "data: " + buffer.slice(5);
             }
-            // Decloak a trailing full JSON message body (client omitted `stream`,
-            // upstream returned one JSON object with no data: framing). Same tool
-            // name restore as the streaming path — otherwise ZCode-style clients
-            // see cloaked "_ide" tool names and fail "Tool not found".
-            if (toolNameMap?.size) {
-              const payload = output.startsWith("data:") ? output.slice(5).trim() : output.trim();
-              if (payload.startsWith("{")) {
-                try {
-                  const obj = JSON.parse(payload);
-                  if (decloakParsedClaude(obj, toolNameMap)) {
-                    output = (output.startsWith("data:") ? "data: " : "") + JSON.stringify(obj);
-                  }
-                } catch { /* not JSON — forward verbatim */ }
-              }
-            }
             reqLogger?.appendConvertedChunk?.(output);
             controller.enqueue(sharedEncoder.encode(output));
           }
@@ -494,7 +467,7 @@ export function createSSEStream(options = {}) {
   });
 }
 
-export function createSSETransformStreamWithLogger(targetFormat, sourceFormat, provider = null, reqLogger = null, toolNameMap = null, model = null, connectionId = null, body = null, onStreamComplete = null, apiKey = null) {
+export function createSSETransformStreamWithLogger(targetFormat, sourceFormat, provider = null, reqLogger = null, toolNameMap = null, model = null, connectionId = null, body = null, onStreamComplete = null, apiKey = null, customToolNames = null) {
   return createSSEStream({
     mode: STREAM_MODE.TRANSLATE,
     targetFormat,
@@ -502,6 +475,7 @@ export function createSSETransformStreamWithLogger(targetFormat, sourceFormat, p
     provider,
     reqLogger,
     toolNameMap,
+    customToolNames,
     model,
     connectionId,
     body,
@@ -510,7 +484,7 @@ export function createSSETransformStreamWithLogger(targetFormat, sourceFormat, p
   });
 }
 
-export function createPassthroughStreamWithLogger(provider = null, reqLogger = null, model = null, connectionId = null, body = null, onStreamComplete = null, apiKey = null, toolNameMap = null) {
+export function createPassthroughStreamWithLogger(provider = null, reqLogger = null, model = null, connectionId = null, body = null, onStreamComplete = null, apiKey = null) {
   return createSSEStream({
     mode: STREAM_MODE.PASSTHROUGH,
     provider,
@@ -519,7 +493,6 @@ export function createPassthroughStreamWithLogger(provider = null, reqLogger = n
     connectionId,
     body,
     onStreamComplete,
-    apiKey,
-    toolNameMap
+    apiKey
   });
 }

@@ -12,13 +12,15 @@ const proxyClientMaxBodySize = process.env.NINEROUTER_PROXY_CLIENT_MAX_BODY_SIZE
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   distDir: process.env.NEXT_DIST_DIR || ".next",
-  // "standalone" (default) produces a self-contained .next/standalone/server.js for Docker/CLI.
-  // Set NEXT_OUTPUT=default to build a standard .next bundle that `next start` can serve directly —
-  // needed for local production runs where standalone's manual file tracing is incomplete
-  // (missing native modules / client reference manifests cause "No SQLite driver" and manifest errors).
-  // NEXT_OUTPUT=default (or "standard") omits the key entirely → standard .next bundle.
-  output: ["default", "standard"].includes(process.env.NEXT_OUTPUT) ? undefined : (process.env.NEXT_OUTPUT || "standalone"),
-  serverExternalPackages: ["better-sqlite3", "sql.js", "node:sqlite", "bun:sqlite"],
+  output: "standalone",
+  // `open` must stay external. It derives its own directory from `import.meta.url`, and
+  // webpack replaces that with the absolute path of the BUILD machine as a string literal.
+  // A release built on macOS therefore ships `file:///Users/.../open/index.js`, which
+  // `fileURLToPath` rejects on Windows ("File URL path must be absolute" — no drive
+  // letter). That throw happens at module scope, so every consumer of `open` dies on
+  // import — including xAI/Grok token refresh, which loads the OAuth service that imports
+  // it. Keeping it external preserves the real `import.meta.url` at runtime.
+  serverExternalPackages: ["better-sqlite3", "sql.js", "node:sqlite", "bun:sqlite", "open"],
   turbopack: {
     root: tracingRoot
   },

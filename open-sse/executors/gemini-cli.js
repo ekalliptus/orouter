@@ -1,7 +1,6 @@
 import { BaseExecutor } from "./base.js";
 import { PROVIDERS } from "../config/providers.js";
 import { OAUTH_ENDPOINTS, GEMINI_CLI_API_CLIENT, geminiCLIUserAgent } from "../config/appConstants.js";
-import { getRequestContext, setRequestContext } from "./requestContext.js";
 
 export class GeminiCLIExecutor extends BaseExecutor {
   constructor() {
@@ -17,16 +16,15 @@ export class GeminiCLIExecutor extends BaseExecutor {
     return {
       "Content-Type": "application/json",
       "Authorization": `Bearer ${credentials.accessToken}`,
-      "User-Agent": geminiCLIUserAgent(getRequestContext().currentModel),
+      "User-Agent": geminiCLIUserAgent(this._currentModel),
       "X-Goog-Api-Client": GEMINI_CLI_API_CLIENT,
       "Accept": stream ? "text/event-stream" : "application/json"
     };
   }
 
   transformRequest(model, body, stream, credentials) {
-    // Store model in the per-request context (NOT on `this`) so concurrent requests to this
-    // singleton executor don't overwrite each other's model before buildHeaders reads it.
-    setRequestContext({ currentModel: model });
+    // Store model for use in buildHeaders (called by base.execute after transformRequest)
+    this._currentModel = model;
     // Cloud Code Assist wraps the Gemini payload: { project, model, request: <body> }
     if (body && body.request && body.model) return body;
     return {

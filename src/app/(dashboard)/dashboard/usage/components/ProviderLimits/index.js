@@ -32,7 +32,6 @@ import {
   CLAUDE_REFRESH_INTERVAL_MS,
   DEPLETED_QUOTA_THRESHOLD,
   AUTO_REFRESH_STORAGE_KEY,
-  COLLAPSED_STORAGE_KEY,
   CONNECTIONS_PAGE_SIZE,
   ACCOUNT_PAGE_SIZE_OPTIONS,
   ACCOUNT_PAGE_SIZE_MAX,
@@ -154,9 +153,6 @@ export default function ProviderLimits() {
   const [expiringFirst, setExpiringFirst] = useState(false);
   const [providerMenuOpen, setProviderMenuOpen] = useState(false);
   const [bulkToggling, setBulkToggling] = useState(false);
-  // Collapsed state: object map of connectionId → true/false. Persisted to localStorage.
-  const [collapsed, setCollapsed] = useState({});
-  const [hasHydratedCollapsed, setHasHydratedCollapsed] = useState(false);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(CONNECTIONS_PAGE_SIZE);
   const [customPageSizeInput, setCustomPageSizeInput] = useState(
@@ -540,28 +536,6 @@ export default function ProviderLimits() {
     window.localStorage.setItem(AUTO_REFRESH_STORAGE_KEY, String(autoRefresh));
   }, [autoRefresh, hasHydratedAutoRefresh]);
 
-  // Hydrate collapsed state from localStorage
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      const stored = window.localStorage.getItem(COLLAPSED_STORAGE_KEY);
-      setCollapsed(stored ? JSON.parse(stored) : {});
-    } catch { setCollapsed({}); }
-    setHasHydratedCollapsed(true);
-  }, []);
-
-  // Persist collapsed state
-  useEffect(() => {
-    if (typeof window === "undefined" || !hasHydratedCollapsed) return;
-    try {
-      window.localStorage.setItem(COLLAPSED_STORAGE_KEY, JSON.stringify(collapsed));
-    } catch { /* ignore quota errors */ }
-  }, [collapsed, hasHydratedCollapsed]);
-
-  const toggleCollapse = useCallback((connectionId) => {
-    setCollapsed((prev) => ({ ...prev, [connectionId]: !prev[connectionId] }));
-  }, []);
-
   // Load auto-ping per-connection maps
   useEffect(() => {
     fetch("/api/settings", { cache: "no-store" })
@@ -720,22 +694,6 @@ export default function ProviderLimits() {
       ),
     [connections, quotaData, expiringFirst, providerFilter, quotaSortMode],
   );
-
-  // Collapse-all helpers — must come after sortedConnections so the memo has the list available.
-  const allCollapsed = useMemo(() => {
-    if (!sortedConnections.length) return false;
-    return sortedConnections.every((c) => collapsed[c.id]);
-  }, [sortedConnections, collapsed]);
-
-  const toggleCollapseAll = useCallback(() => {
-    if (!sortedConnections.length) return;
-    const targetState = !allCollapsed;
-    setCollapsed((prev) => {
-      const next = { ...prev };
-      for (const c of sortedConnections) next[c.id] = targetState;
-      return next;
-    });
-  }, [sortedConnections, allCollapsed]);
 
   // Connection is depleted when any quota entry hit the threshold
   const isConnectionDepleted = (conn) => {
@@ -1013,21 +971,6 @@ export default function ProviderLimits() {
           </button>
 
           {/* Auto-refresh toggle */}
-          {/* Collapse / Expand all toggle */}
-          <button
-            type="button"
-            onClick={toggleCollapseAll}
-            className="flex h-8 shrink-0 items-center gap-1 rounded-lg border border-black/10 px-2 text-xs text-text-primary transition-colors hover:bg-black/5 dark:border-white/10 dark:hover:bg-white/5"
-            title={allCollapsed ? "Expand all cards" : "Collapse all cards"}
-          >
-            <span className="material-symbols-outlined text-[14px]">
-              {allCollapsed ? "unfold_more" : "unfold_less"}
-            </span>
-            <span className="hidden text-text-primary sm:inline">
-              {allCollapsed ? "Expand" : "Collapse"}
-            </span>
-          </button>
-
           <button
             onClick={() => setAutoRefresh((prev) => !prev)}
             className="flex h-8 shrink-0 items-center gap-1 rounded-lg border border-black/10 px-2 text-xs transition-colors hover:bg-black/5 dark:border-white/10 dark:hover:bg-white/5"
@@ -1092,8 +1035,6 @@ export default function ProviderLimits() {
           const visibleQuotas = filterQuotasByVisibility(conn.provider, rawQuotas, quotaVisibility);
           const hiddenQuotaRows = getHiddenQuotaRows(conn.provider, rawQuotas, quotaVisibility);
 
-          const isCollapsed = collapsed[conn.id] === true;
-
           return (
             <Card
               key={conn.id}
@@ -1102,18 +1043,7 @@ export default function ProviderLimits() {
             >
               <div className="px-3 py-2 border-b border-black/10 dark:border-white/10">
                 <div className="flex items-center justify-between gap-2">
-                  <button
-                    type="button"
-                    onClick={() => toggleCollapse(conn.id)}
-                    className="flex items-center gap-2 min-w-0 text-left flex-1 min-w-0 hover:opacity-80 transition-opacity"
-                    aria-label={isCollapsed ? "Expand card" : "Collapse card"}
-                    aria-expanded={!isCollapsed}
-                  >
-                    <span
-                      className={`material-symbols-outlined text-[18px] text-text-muted shrink-0 transition-transform ${isCollapsed ? "" : "rotate-90"}`}
-                    >
-                      chevron_right
-                    </span>
+                  <div className="flex items-center gap-2 min-w-0">
                     <div className="w-8 h-8 shrink-0 rounded-md flex items-center justify-center overflow-hidden">
                       <ProviderIcon
                         src={`/providers/${conn.provider}.png`}
@@ -1180,7 +1110,7 @@ export default function ProviderLimits() {
                         </div>
                       )}
                     </div>
-                  </button>
+                  </div>
 
                   <div className="flex items-center gap-1 shrink-0">
                     {isCodex && (
@@ -1305,7 +1235,6 @@ export default function ProviderLimits() {
                 </div>
               </div>
 
-              {!isCollapsed && (
               <div className="px-2 py-1.5">
                 {isLoading ? (
                   <div className="text-center py-5 text-text-muted">
@@ -1341,7 +1270,7 @@ export default function ProviderLimits() {
                       visibility_off
                     </span>
                     <span className="shrink-0">Hidden:</span>
-                    <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto whitespace-nowrap">
+                    <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto whitespace-nowrap pb-2">
                       {hiddenQuotaRows.map((quotaRow) => (
                         <button
                           key={getQuotaVisibilityKey(quotaRow)}
@@ -1357,7 +1286,6 @@ export default function ProviderLimits() {
                   </div>
                 )}
               </div>
-              )}
             </Card>
           );
         })}

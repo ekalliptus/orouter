@@ -34,7 +34,7 @@ npm --version
 どこからでも使用できるように9Routerをグローバルインストール:
 
 ```bash
-bun install -g 9router
+npm install -g 9router
 ```
 
 **9Routerを起動:**
@@ -55,13 +55,13 @@ bun install -g 9router
 ```bash
 mkdir my-9router
 cd my-9router
-bun add 9router
+npm install 9router
 ```
 
 **9Routerを起動:**
 
 ```bash
-bunx 9router
+npx 9router
 ```
 
 **利点:**
@@ -76,8 +76,8 @@ GitHubからクローンしてビルド:
 ```bash
 git clone https://github.com/decolua/9router.git
 cd 9router/app
-bun install
-bun run build
+npm install
+npm run build
 npm start
 ```
 
@@ -283,7 +283,7 @@ echo 'export PATH=~/.npm-global/bin:$PATH' >> ~/.bashrc
 source ~/.bashrc
 
 # 再度インストール
-bun install -g 9router
+npm install -g 9router
 ```
 
 ### Node.jsバージョンが古すぎる
@@ -360,7 +360,7 @@ pkill -f 9router
 **または自動再起動にPM2を使用:**
 
 ```bash
-bun install -g pm2
+npm install -g pm2
 pm2 start 9router --name 9router
 pm2 save
 ```
@@ -372,7 +372,7 @@ pm2 save
 ### ローカル開発
 
 ```bash
-bun install -g 9router
+npm install -g 9router
 9router
 ```
 
@@ -382,7 +382,7 @@ bun install -g 9router
 
 ```bash
 # インストール
-bun install -g 9router
+npm install -g 9router
 
 # 設定
 export JWT_SECRET="your-secure-secret"
@@ -390,7 +390,7 @@ export INITIAL_PASSWORD="your-password"
 export NODE_ENV="production"
 
 # PM2で起動
-bun install -g pm2
+npm install -g pm2
 pm2 start 9router --name 9router
 pm2 save
 pm2 startup

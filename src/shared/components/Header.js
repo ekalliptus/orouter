@@ -109,7 +109,7 @@ const getPageInfo = (pathname) => {
   if (pathname.includes("/mitm"))
     return {
       title: "MITM Proxy",
-      description: "Intercept CLI tool traffic and route through ORouter",
+      description: "Intercept CLI tool traffic and route through 9Router",
       icon: "security",
       breadcrumbs: [],
     };
@@ -137,7 +137,7 @@ const getPageInfo = (pathname) => {
   if (pathname.includes("/skills"))
     return {
       title: "Agent Skills",
-      description: "Copy a link and paste to your AI to use ORouter — no install needed",
+      description: "Copy a link and paste to your AI to use 9Router — no install needed",
       icon: "extension",
       breadcrumbs: [],
     };
@@ -188,7 +188,6 @@ export default function Header({ onMenuClick, showMenuButton = true }) {
   // Memoize page info to prevent unnecessary recalculations
   const pageInfo = useMemo(() => getPageInfo(pathname), [pathname]);
   const { title, description, icon, breadcrumbs } = pageInfo;
-  const routeBreadcrumb = `~${pathname || "/dashboard"}`;
 
   useEffect(() => {
     let cancelled = false;
@@ -228,7 +227,7 @@ export default function Header({ onMenuClick, showMenuButton = true }) {
   };
 
   return (
-    <header className="aurora-glass-solid z-20 m-2 mb-0 flex shrink-0 items-center justify-between gap-3 rounded-[16px] px-4 py-3 lg:mx-4 lg:mt-4 lg:px-6">
+    <header className="shrink-0 flex items-center justify-between gap-3 px-4 lg:px-8 pt-3 pb-2 border-b border-border-subtle bg-surface/60 backdrop-blur-xl lg:bg-transparent lg:backdrop-blur-none z-20">
       {/* Mobile menu button */}
       <div className="flex items-center gap-3 lg:hidden shrink-0">
         {showMenuButton && (
@@ -242,8 +241,7 @@ export default function Header({ onMenuClick, showMenuButton = true }) {
       </div>
 
       {/* Page title with breadcrumbs */}
-      <div className="flex min-w-0 flex-1 flex-col">
-        <p className="console-label mb-1 truncate" title={routeBreadcrumb}>{routeBreadcrumb}</p>
+      <div className="flex flex-col min-w-0 flex-1">
         {breadcrumbs.length > 0 ? (
           <div className="flex items-center gap-2">
             {breadcrumbs.map((crumb, index) => (

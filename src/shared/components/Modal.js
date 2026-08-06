@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef } from "react";
+import { useEffect } from "react";
 import { cn } from "@/shared/utils/cn";
 import Button from "./Button";
 import Tooltip from "./Tooltip";
@@ -16,9 +16,6 @@ export default function Modal({
   showTrafficLights = true,
   className,
 }) {
-  const dialogRef = useRef(null);
-  const previousFocusRef = useRef(null);
-  const titleId = useId();
   const sizes = {
     sm: "max-w-sm",
     md: "max-w-md",
@@ -37,43 +34,11 @@ export default function Modal({
   }, [isOpen]);
 
   useEffect(() => {
-    if (!isOpen) return;
-
-    previousFocusRef.current = document.activeElement;
-    const focusableSelector = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
-    const dialog = dialogRef.current;
-    (dialog?.querySelector(focusableSelector) || dialog)?.focus();
-
-    const handleKeyDown = (event) => {
-      if (event.key === "Escape") {
-        onClose();
-        return;
-      }
-      if (event.key !== "Tab") return;
-
-      const focusable = dialogRef.current?.querySelectorAll(focusableSelector);
-      if (!focusable?.length) {
-        event.preventDefault();
-        dialogRef.current?.focus();
-        return;
-      }
-
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
+    const handleEscape = (e) => {
+      if (e.key === "Escape" && isOpen) onClose();
     };
-
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("keydown", handleKeyDown);
-      previousFocusRef.current?.focus?.();
-    };
+    document.addEventListener("keydown", handleEscape);
+    return () => document.removeEventListener("keydown", handleEscape);
   }, [isOpen, onClose]);
 
   if (!isOpen) return null;
@@ -88,14 +53,10 @@ export default function Modal({
 
       {/* Modal content */}
       <div
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={title ? titleId : undefined}
-        tabIndex={-1}
         className={cn(
-          "aurora-glass-strong relative w-full",
-          "rounded-[18px]",
+          "relative w-full bg-surface",
+          "border border-border-subtle",
+          "rounded-[14px] shadow-[var(--shadow-elev)]",
           "fade-in",
           sizes[size],
           className
@@ -123,7 +84,7 @@ export default function Modal({
                 </div>
               )}
               {title && (
-                <h2 id={titleId} className="text-lg font-semibold text-text-main">{title}</h2>
+                <h2 className="text-lg font-semibold text-text-main">{title}</h2>
               )}
             </div>
             {/* X button — mobile only */}

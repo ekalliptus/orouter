@@ -70,7 +70,7 @@ Result: Never stop coding, minimal cost
 **1. Глобальная установка:**
 
 ```bash
-bun install -g 9router
+npm install -g 9router
 9router
 ```
 
@@ -97,15 +97,15 @@ bun install -g 9router
 
 ```bash
 cp .env.example .env
-bun install
-PORT=20128 NEXT_PUBLIC_BASE_URL=http://localhost:20128 bun run dev
+npm install
+PORT=20128 NEXT_PUBLIC_BASE_URL=http://localhost:20128 npm run dev
 ```
 
 Режим Production:
 
 ```bash
-bun run build
-PORT=20128 HOSTNAME=0.0.0.0 NEXT_PUBLIC_BASE_URL=http://localhost:20128 bun run start
+npm run build
+PORT=20128 HOSTNAME=0.0.0.0 NEXT_PUBLIC_BASE_URL=http://localhost:20128 npm run start
 ```
 
 URL по умолчанию:
@@ -950,8 +950,8 @@ Model: cc/claude-opus-4-6
 # Clone and install
 git clone https://github.com/decolua/9router.git
 cd 9router
-bun install
-bun run build
+npm install
+npm run build
 
 # Configure
 export JWT="your-secure-secret-change-this"
@@ -966,10 +966,10 @@ export API_KEY_SECRET="endpoint-proxy-api-key-secret"
 export MACHINE_ID_SALT="endpoint-proxy-salt"
 
 # Start
-bun run start
+npm run start
 
 # Or use PM2
-bun install -g pm2
+npm install -g pm2
 pm2 start --name 9router -- start
 pm2 save
 pm2 startup

@@ -105,7 +105,7 @@ Bắt đầu trong 2 phút:
 
 ```bash
 # Install globally
-bun install -g 9router
+npm install -g 9router
 
 # Start (dashboard opens automatically)
 9router

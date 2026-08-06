@@ -86,20 +86,6 @@ export function reorderByCapabilities(models, required) {
  * @type {Map<string, { index: number, consecutiveUseCount: number }>}
  */
 const comboRotationState = new Map();
-// Per-combo mutex chain. getRotatedModels does a synchronous read-modify-write of the shared
-// comboRotationState map; without serialization, two concurrent requests to the same combo both
-// read the same base state and both write the same advanced index — losing a rotation step and
-// skewing the sticky-use counter (load isn't evenly distributed under concurrency). Each combo
-// name gets its own promise chain so different combos don't block each other.
-const comboRotationLocks = new Map();
-function withComboLock(key, fn) {
-  const prev = comboRotationLocks.get(key) || Promise.resolve();
-  const next = prev.then(fn, fn);
-  // Swallow rejections so a throw in fn doesn't poison the chain for future callers; the caller
-  // still sees the rejection from the returned promise.
-  comboRotationLocks.set(key, next.then(() => {}, () => {}));
-  return next;
-}
 
 // Trailing run of items after the last assistant/model turn = the current user
 // turn. It may span several messages (e.g. text + image split across blocks),
@@ -120,15 +106,32 @@ export function detectRequiredCapabilities(body) {
   const required = new Set();
   if (!body || typeof body !== "object") return required;
 
+  const addByMime = (mime) => {
+    if (typeof mime !== "string") return;
+    if (mime.startsWith("image/")) required.add("vision");
+    else if (mime === "application/pdf") required.add("pdf");
+    else if (mime.startsWith("audio/")) required.add("audioInput");
+    else if (mime.startsWith("video/")) required.add("videoInput");
+  };
+
   const scanBlock = (b) => {
     if (!b || typeof b !== "object") return;
     const t = b.type;
     if (t === "image_url" || t === "image" || t === "input_image") required.add("vision");
-    if (t === "file" || t === "document" || t === "input_file") required.add("pdf");
+    if (t === "input_audio" || t === "audio_url" || t === "audio") required.add("audioInput");
+    if (t === "input_video" || t === "video_url" || t === "video") required.add("videoInput");
+    if (t === "file" || t === "document" || t === "input_file") {
+      // Infer modality from embedded mime when available; fall back to pdf for generic files.
+      let fmime = null;
+      if (b.input_audio?.format) fmime = `audio/${b.input_audio.format}`;
+      else if (b.file?.file_data) fmime = String(b.file.file_data).match(/^data:([^;,]+)/)?.[1];
+      else if (b.source?.media_type) fmime = b.source.media_type;
+      else if (b.source?.data) fmime = String(b.source.data).match(/^data:([^;,]+)/)?.[1];
+      if (fmime) addByMime(fmime);
+      else required.add("pdf");
+    }
     // gemini parts: inlineData/fileData carry a mime
-    const mime = b.inlineData?.mimeType || b.fileData?.mimeType;
-    if (typeof mime === "string" && mime.startsWith("image/")) required.add("vision");
-    if (mime === "application/pdf") required.add("pdf");
+    addByMime(b.inlineData?.mimeType || b.fileData?.mimeType);
   };
 
   const scanContent = (content) => {
@@ -168,42 +171,35 @@ function rotateModelsFromIndex(models, currentIndex) {
  * @param {number|string} [stickyLimit=1] - Requests per combo model before switching
  * @returns {string[]} Rotated models array
  */
-export async function getRotatedModels(models, comboName, strategy, stickyLimit = 1) {
+export function getRotatedModels(models, comboName, strategy, stickyLimit = 1) {
   if (!models || models.length <= 1 || strategy !== "round-robin") {
     return models;
   }
 
   const rotationKey = comboName || "__default__";
   const normalizedStickyLimit = normalizeStickyLimit(stickyLimit);
+  const existingState = comboRotationState.get(rotationKey);
+  const state = typeof existingState === "number"
+    ? { index: existingState, consecutiveUseCount: 0 }
+    : (existingState || { index: 0, consecutiveUseCount: 0 });
 
-  // Serialize the read-modify-write of the shared rotation state per combo. Two concurrent
-  // requests previously both read the same base state and wrote the same next index, dropping a
-  // rotation step and under-counting sticky usage — so round-robin was not actually round under
-  // load. The lock is per-combo-name so unrelated combos don't contend.
-  return withComboLock(rotationKey, () => {
-    const existingState = comboRotationState.get(rotationKey);
-    const state = typeof existingState === "number"
-      ? { index: existingState, consecutiveUseCount: 0 }
-      : (existingState || { index: 0, consecutiveUseCount: 0 });
+  const currentIndex = state.index % models.length;
+  const rotatedModels = rotateModelsFromIndex(models, currentIndex);
+  const nextUseCount = state.consecutiveUseCount + 1;
 
-    const currentIndex = state.index % models.length;
-    const rotatedModels = rotateModelsFromIndex(models, currentIndex);
-    const nextUseCount = state.consecutiveUseCount + 1;
+  if (nextUseCount >= normalizedStickyLimit) {
+    comboRotationState.set(rotationKey, {
+      index: (currentIndex + 1) % models.length,
+      consecutiveUseCount: 0,
+    });
+  } else {
+    comboRotationState.set(rotationKey, {
+      index: currentIndex,
+      consecutiveUseCount: nextUseCount,
+    });
+  }
 
-    if (nextUseCount >= normalizedStickyLimit) {
-      comboRotationState.set(rotationKey, {
-        index: (currentIndex + 1) % models.length,
-        consecutiveUseCount: 0,
-      });
-    } else {
-      comboRotationState.set(rotationKey, {
-        index: currentIndex,
-        consecutiveUseCount: nextUseCount,
-      });
-    }
-
-    return rotatedModels;
-  });
+  return rotatedModels;
 }
 
 /**
@@ -249,7 +245,7 @@ export function getComboModelsFromData(modelStr, combosData) {
  */
 export async function handleComboChat({ body, models, handleSingleModel, log, comboName, comboStrategy, comboStickyLimit = 1, autoSwitch = true }) {
   // Apply rotation strategy if enabled
-  let rotatedModels = await getRotatedModels(models, comboName, comboStrategy, comboStickyLimit);
+  let rotatedModels = getRotatedModels(models, comboName, comboStrategy, comboStickyLimit);
 
   // Auto-switch: float models that satisfy the request's required capabilities to the front.
   if (autoSwitch) {
@@ -286,17 +282,9 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
       try {
         const errorBody = await result.clone().json();
         errorText = errorBody?.error?.message || errorBody?.error || errorBody?.message || errorText;
-        // Some 9router error bodies carry an explicit retry hint; prefer it if present.
-        retryAfter = errorBody?.retryAfter || errorBody?.error?.resets_at || errorBody?.error?.retryAfter || null;
+        retryAfter = errorBody?.retryAfter || null;
       } catch {
         // Ignore JSON parse errors
-      }
-      // The authoritative reset time lives in the Retry-After header that handleSingleModel sets
-      // (via unavailableResponse) for rate-limited accounts. Reading the body never surfaced it
-      // before, so the combo layer silently dropped the precise reset time clients back off on.
-      if (!retryAfter && result.headers?.get) {
-        const headerRetry = result.headers.get("retry-after");
-        if (headerRetry) retryAfter = headerRetry;
       }
 
       // Track earliest retryAfter across all combo models

@@ -144,14 +144,6 @@ async function fetchCursorCatalog(credentials, signal) {
   delete headers["connect-accept-encoding"];
   delete headers["connect-protocol-version"];
 
-  // Unit tests and embedders may provide a fetch transport; production keeps
-  // HTTP/2 because Cursor's AgentService rejects Node's HTTP/1.1 fetch.
-  if (globalThis.fetch?._isMockFunction) {
-    const response = await globalThis.fetch(url, { method: "POST", headers, body: new Uint8Array(), signal });
-    if (!response.ok) throw Object.assign(new Error(`Cursor GetUsableModels returned ${response.status}`), { status: response.status });
-    return parseCursorUsableModels(new Uint8Array(await response.arrayBuffer()));
-  }
-
   const response = await http2PostProto(url, headers, new Uint8Array(), signal, FETCH_TIMEOUT_MS);
   if (response.status !== 200) {
     const error = new Error(`Cursor GetUsableModels returned ${response.status}`);
