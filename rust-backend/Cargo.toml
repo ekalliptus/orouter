@@ -1,0 +1,41 @@
+[package]
+name = "orouter-backend"
+version = "0.1.0"
+edition = "2021"
+description = "ORouter Rust backend v1 — LLM proxy + SSE streaming + health"
+
+[[bin]]
+name = "orouter-backend"
+path = "src/main.rs"
+
+[dependencies]
+# HTTP server + routing
+axum = { version = "0.7", features = ["json", "tokio", "http1"] }
+tokio = { version = "1", features = ["full"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "limit", "trace"] }
+# HTTP client (streaming upstream calls)
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
+futures-util = "0.3"
+bytes = "1"
+http = "1"
+# SQLite (bundled so no system lib needed) — opens the SAME file Node/Go use
+rusqlite = { version = "0.32", features = ["bundled"] }
+# Serialization + config
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# JWT for dashboard auth cookie (M3 login; v1 only verifies if a cookie shows up)
+jsonwebtoken = "9"
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+# Misc
+once_cell = "1"
+subtle = "2"          # constant-time compare for inbound API keys
+memchr = "2"          # fast newline scan in the SSE relay
+async-stream = "0.3"  # the SSE relay body stream
+anyhow = "1"
+
+[profile.release]
+opt-level = 3
+lto = "thin"

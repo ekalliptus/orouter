@@ -1,0 +1,177 @@
+/* ============================================================
+   ORouter — "gambar anak 5 tahun" theme tokens.
+   Built on the original neobrutalism palette (sharp corners,
+   thick black borders, hard offset shadows) but pushed toward
+   a saturated, crayon-on-paper kid-drawing feel.
+
+   This file mirrors the structure of src/app/globals.css :root /
+   .dark in the old Next.js app so components referencing the same
+   token names (bg-surface, text-text-main, shadow-warm, …) still
+   work. Values are the new kid palette.
+   ============================================================ */
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  /* ---- Brand (orange anchor, kept) ---- */
+  --color-brand-50: #fff3ec;
+  --color-brand-100: #ffe0cf;
+  --color-brand-200: #ffc09a;
+  --color-brand-300: #ff9e66;
+  --color-brand-400: #ff8347;
+  --color-brand-500: #ff6b35;
+  --color-brand-600: #e85420;
+  --color-brand-700: #bf3f12;
+  --color-brand-800: #8c2f0e;
+  --color-brand-900: #5a1f08;
+
+  --color-primary: var(--color-brand-500);
+  --color-primary-hover: var(--color-brand-600);
+
+  /* ---- Kid accent pops — saturated primaries ---- */
+  --color-accent: #ffd23f;      /* sunshine yellow */
+  --color-accent-2: #2ec4b6;    /* crayon teal */
+  --color-accent-3: #ff6b9d;    /* marker pink */
+  --color-accent-4: #4361ee;    /* poster blue */
+  --color-accent-5: #06d6a0;    /* spring green */
+
+  /* ---- Surfaces (light) — warm construction paper ---- */
+  --color-bg: #f7f1e3;          /* manila craft paper */
+  --color-bg-alt: #efe6d2;
+  --color-surface: #fffdf7;     /* drawing paper, near-white warm */
+  --color-surface-2: #f6efdf;
+  --color-surface-3: #ece1c9;
+  --color-sidebar: #f7f1e3;
+
+  /* ---- Borders — solid marker black ---- */
+  --color-border: #000000;
+  --color-border-subtle: #000000;
+
+  /* ---- Text ---- */
+  --color-text: #1a1410;
+  --color-text-main: #1a1410;
+  --color-text-muted: #4a4036;
+  --color-text-subtle: #6b6052;
+
+  /* ---- Status ---- */
+  --color-danger: #e63946;
+  --color-success: #2a9d8f;
+  --color-warning: #ffd23f;
+  --color-info: #2ec4b6;
+
+  /* ---- Radius — sharp paper-cut corners ---- */
+  --radius-brand: 0px;
+  --radius-brand-lg: 0px;
+
+  /* ---- Crayon offset shadows — bigger than stock neobrutalism,
+       like a paper cut-out glued slightly off. Driven by --nb-* tokens. ---- */
+  --nb-border: #000000;
+  --nb-shadow-sm: 4px 4px 0 0 var(--nb-border);
+  --nb-shadow: 6px 6px 0 0 var(--nb-border);
+  --nb-shadow-lg: 9px 9px 0 0 var(--nb-border);
+  --nb-shadow-xl: 12px 12px 0 0 var(--nb-border);
+
+  --shadow-soft: var(--nb-shadow-sm);
+  --shadow-warm: var(--nb-shadow);
+  --shadow-elevated: var(--nb-shadow-lg);
+  --shadow-elev: var(--nb-shadow);
+  --shadow-focus: var(--nb-shadow-sm);
+
+  /* ---- Wobble strength for the crayon-edge SVG filter (kiddraw.css) ---- */
+  --wobble: 2.4;
+  /* default tilt applied by .kid-tilt when not overridden inline */
+  --tilt: 0deg;
+
+  color-scheme: light;
+}
+
+.dark {
+  /* ---- Surfaces (dark) — construction paper at night ---- */
+  --color-bg: #14110d;
+  --color-bg-alt: #1c1814;
+  --color-surface: #211c16;
+  --color-surface-2: #2c2620;
+  --color-surface-3: #3a322a;
+  --color-sidebar: #14110d;
+
+  --color-border: #000000;
+  --color-border-subtle: #3a322a;
+
+  --color-text: #f7f1e3;
+  --color-text-main: #f7f1e3;
+  --color-text-muted: #c7bca9;
+  --color-text-subtle: #948874;
+
+  --color-danger: #ff5470;
+  --color-success: #2ec4b6;
+  --color-warning: #ffd23f;
+  --color-info: #4cc9f0;
+
+  /* offset shadows stay black; on dark paper they read as depth */
+  --nb-shadow-sm: 4px 4px 0 0 var(--nb-border);
+  --nb-shadow: 6px 6px 0 0 var(--nb-border);
+  --nb-shadow-lg: 9px 9px 0 0 var(--nb-border);
+  --nb-shadow-xl: 12px 12px 0 0 var(--nb-border);
+
+  color-scheme: dark;
+}
+
+/* ============================================================
+   Tailwind v4 token bridge — exposes the CSS vars above as
+   Tailwind utilities (bg-surface, text-text-main, border-border,
+   shadow-warm, font-sans, rounded-brand, …) mirroring the old app.
+   ============================================================ */
+@theme inline {
+  --color-brand-50: var(--color-brand-50);
+  --color-brand-100: var(--color-brand-100);
+  --color-brand-200: var(--color-brand-200);
+  --color-brand-300: var(--color-brand-300);
+  --color-brand-400: var(--color-brand-400);
+  --color-brand-500: var(--color-brand-500);
+  --color-brand-600: var(--color-brand-600);
+  --color-brand-700: var(--color-brand-700);
+  --color-brand-800: var(--color-brand-800);
+  --color-brand-900: var(--color-brand-900);
+
+  --color-primary: var(--color-primary);
+  --color-primary-hover: var(--color-primary-hover);
+  --color-accent: var(--color-accent);
+  --color-accent-2: var(--color-accent-2);
+  --color-accent-3: var(--color-accent-3);
+  --color-accent-4: var(--color-accent-4);
+  --color-accent-5: var(--color-accent-5);
+
+  --color-bg: var(--color-bg);
+  --color-bg-alt: var(--color-bg-alt);
+  --color-surface: var(--color-surface);
+  --color-surface-2: var(--color-surface-2);
+  --color-surface-3: var(--color-surface-3);
+  --color-sidebar: var(--color-sidebar);
+  --color-border: var(--color-border);
+  --color-border-subtle: var(--color-border-subtle);
+  --color-text: var(--color-text);
+  --color-text-main: var(--color-text-main);
+  --color-text-muted: var(--color-text-muted);
+  --color-text-subtle: var(--color-text-subtle);
+  --color-danger: var(--color-danger);
+  --color-success: var(--color-success);
+  --color-warning: var(--color-warning);
+  --color-info: var(--color-info);
+
+  --radius-brand: var(--radius-brand);
+  --radius-brand-lg: var(--radius-brand-lg);
+
+  --shadow-soft: var(--shadow-soft);
+  --shadow-warm: var(--shadow-warm);
+  --shadow-elevated: var(--shadow-elevated);
+  --shadow-elev: var(--shadow-elev);
+  --shadow-focus: var(--shadow-focus);
+
+  /* Gochi Hand everywhere for display; Inter Variable for legible dense text,
+     Patrick Hand as a softer handwriting fallback. */
+  --font-sans: "Gochi Hand", "Patrick Hand", "Inter Variable", -apple-system,
+    BlinkMacSystemFont, system-ui, sans-serif;
+  --font-hand: "Gochi Hand", "Patrick Hand", cursive;
+  --font-body: "Patrick Hand", "Inter Variable", system-ui, sans-serif;
+}

@@ -1,0 +1,8 @@
+node_modules
+dist
+.vite
+*.log
+.DS_Store
+
+# temp rewrite test data
+/tmp/orouter-test-9router/
