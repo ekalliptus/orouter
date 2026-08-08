@@ -1,5 +1,8 @@
-//! HTTP handlers for the non-chat routes: health + models listing.
-//! Both are public (no auth gate), matching the Go backend (server.go:43,49).
+//! HTTP handlers: public (health + models) and protected dashboard routes.
+//! The protected routes live in `dashboard`; the auth gate itself is the
+//! `require_auth` middleware wired in main.rs (mirrors dashboardGuard.js).
+
+pub mod dashboard;
 
 use axum::{http::StatusCode, response::IntoResponse};
 

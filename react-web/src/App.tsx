@@ -6,9 +6,11 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-route
 import { useThemeStore } from "@/store/themeStore";
 import { initRuntimeI18n, reloadTranslations } from "@/i18n/runtime";
 import DashboardLayout from "@/components/DashboardLayout";
+import RequireAuth from "@/components/RequireAuth";
 import LoginPage from "@/pages/LoginPage";
 import EndpointPage from "@/pages/EndpointPage";
 import ProvidersPage from "@/pages/ProvidersPage";
+import KeysPage from "@/pages/KeysPage";
 import ComingSoonPage from "@/pages/ComingSoonPage";
 
 function LocaleReloader() {
@@ -35,9 +37,10 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route path="/login" element={<LoginPage />} />
-        <Route path="/dashboard" element={<DashboardLayout />}>
+        <Route path="/dashboard" element={<RequireAuth><DashboardLayout /></RequireAuth>}>
           <Route index element={<EndpointPage />} />
           <Route path="providers" element={<ProvidersPage />} />
+          <Route path="keys" element={<KeysPage />} />
           <Route path="usage" element={<ComingSoonPage title="Usage" emoji="📊" />} />
           <Route path="combos" element={<ComingSoonPage title="Combos" emoji="🧩" />} />
           <Route path="cli-tools" element={<ComingSoonPage title="CLI Tools" emoji="🛠️" />} />

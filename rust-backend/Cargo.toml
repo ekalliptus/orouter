@@ -26,6 +26,14 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # JWT for dashboard auth cookie (M3 login; v1 only verifies if a cookie shows up)
 jsonwebtoken = "9"
+# bcrypt password hashing (mirrors bcryptjs used by the Node login route)
+bcrypt = "0.16"
+# UUID generation for connection/key ids (mirrors uuid v4 in the Node repos)
+uuid = { version = "1", features = ["v4"] }
+# HMAC + SHA for the sk-<machineId>-<keyId>-<crc8> API key format
+hmac = "0.12"
+sha2 = "0.10"
+rand = "0.8"
 # Logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }

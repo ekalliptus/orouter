@@ -11,6 +11,7 @@
 //! later milestones. See PLAN.md / the conversation for the milestone map.
 
 mod api;
+mod auth;
 mod config;
 mod db;
 mod proxy;
@@ -18,7 +19,11 @@ mod snapshot;
 
 use std::time::Duration;
 
-use axum::{routing::get, Router};
+use axum::{
+    middleware,
+    routing::{get, post},
+    Router,
+};
 use proxy::AppState;
 use tower_http::{cors::CorsLayer, limit::RequestBodyLimitLayer, trace::TraceLayer};
 use tracing::info;
@@ -67,10 +72,30 @@ async fn main() {
 
     let state = AppState { db, client };
 
+    // Public auth routes (login/status/logout) — NOT behind the session gate.
+    // They share the same AppState because login reads settings + updates the
+    // login limiter using the DB.
+    let auth_routes = Router::new()
+        .route("/api/auth/login", post(auth::login))
+        .route("/api/auth/logout", post(auth::logout))
+        .route("/api/auth/status", get(auth::status))
+        .with_state(state.clone());
+
+    // Protected dashboard routes — session-gated via require_auth middleware.
+    let dashboard_routes = Router::new()
+        .route("/api/settings", get(api::dashboard::settings_get).patch(api::dashboard::settings_patch))
+        .route("/api/keys", get(api::dashboard::keys_get).post(api::dashboard::keys_post))
+        .route("/api/keys/:id", axum::routing::delete(api::dashboard::keys_delete))
+        .route("/api/providers", get(api::dashboard::providers_get))
+        .layer(middleware::from_fn(auth::middleware::require_auth))
+        .with_state(state.clone());
+
     let app = Router::new()
         .route("/health", get(api::health))
         .route("/v1/models", get(api::models))
-        .route("/v1/chat/completions", axum::routing::post(proxy::chat_completions))
+        .route("/v1/chat/completions", post(proxy::chat_completions))
+        .merge(auth_routes)
+        .merge(dashboard_routes)
         .layer(RequestBodyLimitLayer::new(cfg.body_max_bytes))
         .layer(CorsLayer::very_permissive())
         .layer(TraceLayer::new_for_http())
