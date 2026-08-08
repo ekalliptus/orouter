@@ -22,6 +22,7 @@ pub struct NativeChatTransport {
     #[serde(rename = "authScheme", default)]
     pub auth_scheme: String,
     #[serde(rename = "timeoutMs", default)]
+    #[allow(dead_code)]
     pub timeout_ms: i64,
 }
 
@@ -29,6 +30,7 @@ pub struct NativeChatTransport {
 pub struct SnapModel {
     pub id: String,
     #[serde(default)]
+    #[allow(dead_code)]
     pub name: String,
     #[serde(default)]
     pub kind: String,
@@ -75,7 +77,7 @@ impl ModelsSnapshot {
 
 static SNAPSHOT_RAW: &[u8] = include_bytes!("models_snapshot.json");
 
-pub static SNAPSHOT: Lazy<ModelsSnapshot> = Lazy::new(|| {
+static SNAPSHOT: Lazy<ModelsSnapshot> = Lazy::new(|| {
     serde_json::from_slice(SNAPSHOT_RAW)
         .expect("snapshot: failed to parse embedded models_snapshot.json — regenerate via `bun run gen:models-snapshot`")
 });
@@ -107,12 +109,24 @@ pub fn resolve(model: &str) -> Option<ResolvedModel> {
         .provider_models
         .get(&provider_id)
         .and_then(|models| {
-            models.iter().find(|m| m.id == model_id && m.kind == "llm" && m.native_chat)
+            models
+                .iter()
+                .find(|m| m.id == model_id && m.kind == "llm" && m.native_chat)
         })
-        .map(|m| if m.upstream_id.is_empty() { m.id.clone() } else { m.upstream_id.clone() })
+        .map(|m| {
+            if m.upstream_id.is_empty() {
+                m.id.clone()
+            } else {
+                m.upstream_id.clone()
+            }
+        })
         .unwrap_or_else(|| model_id.to_string());
 
-    Some(ResolvedModel { provider_id, upstream_model, transport })
+    Some(ResolvedModel {
+        provider_id,
+        upstream_model,
+        transport,
+    })
 }
 
 /// Public catalog for GET /v1/models. Returns the OpenAI-compatible model list

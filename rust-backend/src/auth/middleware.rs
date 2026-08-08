@@ -31,7 +31,9 @@ const PUBLIC_API_PATHS: &[&str] = &[
 ];
 
 fn is_public(path: &str) -> bool {
-    PUBLIC_API_PATHS.iter().any(|p| path == *p || path.starts_with(&format!("{p}/")))
+    PUBLIC_API_PATHS
+        .iter()
+        .any(|p| path == *p || path.starts_with(&format!("{p}/")))
 }
 
 /// A loopback host (localhost / 127.0.0.1 / ::1) bypasses the session check,
@@ -65,6 +67,10 @@ pub async fn require_auth(req: Request<Body>, next: Next) -> Response {
     if super::extract_and_verify(&headers) {
         next.run(req).await
     } else {
-        (StatusCode::UNAUTHORIZED, axum::Json(json!({ "error": "Authentication required" }))).into_response()
+        (
+            StatusCode::UNAUTHORIZED,
+            axum::Json(json!({ "error": "Authentication required" })),
+        )
+            .into_response()
     }
 }

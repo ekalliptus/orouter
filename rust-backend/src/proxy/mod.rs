@@ -48,12 +48,21 @@ pub async fn chat_completions(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, ChatError> {
-    let mut payload: Value = serde_json::from_slice(&body)
-        .map_err(|_| ChatError { status: StatusCode::BAD_REQUEST, message: "Invalid JSON body".into() })?;
+    let mut payload: Value = serde_json::from_slice(&body).map_err(|_| ChatError {
+        status: StatusCode::BAD_REQUEST,
+        message: "Invalid JSON body".into(),
+    })?;
 
-    let model = payload.get("model").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let model = payload
+        .get("model")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
     if model.is_empty() {
-        return Err(ChatError { status: StatusCode::BAD_REQUEST, message: "Missing model".into() });
+        return Err(ChatError {
+            status: StatusCode::BAD_REQUEST,
+            message: "Missing model".into(),
+        });
     }
 
     // Optional inbound API-key gate.
@@ -84,25 +93,63 @@ pub async fn chat_completions(
         .await
         .ok_or_else(|| ChatError {
             status: StatusCode::SERVICE_UNAVAILABLE,
-            message: format!("No active credential found for provider '{}'", resolved.provider_id),
+            message: format!(
+                "No active credential found for provider '{}'",
+                resolved.provider_id
+            ),
         })?;
 
     // Overwrite model with the upstream id (Go: out["model"] = upstream).
     if let Some(obj) = payload.as_object_mut() {
-        obj.insert("model".into(), Value::String(resolved.upstream_model.clone()));
+        obj.insert(
+            "model".into(),
+            Value::String(resolved.upstream_model.clone()),
+        );
     }
-    let payload_bytes = serde_json::to_vec(&payload)
-        .map_err(|_| ChatError { status: StatusCode::INTERNAL_SERVER_ERROR, message: "encode upstream request".into() })?;
+    let payload_bytes = serde_json::to_vec(&payload).map_err(|_| ChatError {
+        status: StatusCode::INTERNAL_SERVER_ERROR,
+        message: "encode upstream request".into(),
+    })?;
 
-    let is_stream = payload.get("stream").and_then(|v| v.as_bool()).unwrap_or(false);
+    let is_stream = payload
+        .get("stream")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let inbound_api_key = extract_api_key(&headers);
 
-    let upstream = execute_upstream(&state, &resolved, cred.secret, payload_bytes, is_stream).await?;
+    let upstream = execute_upstream(
+        &state,
+        &resolved,
+        cred.secret.clone(),
+        payload_bytes,
+        is_stream,
+    )
+    .await?;
+
+    // Context for usage logging (M7). The SSE relay logs after the stream ends;
+    // the JSON path logs from the handler.
+    let usage_ctx = UsageCtx {
+        provider: resolved.provider_id.clone(),
+        model: model.clone(),
+        connection_id: cred.connection_id.clone(),
+        api_key: inbound_api_key.unwrap_or_default(),
+        endpoint: "/v1/chat/completions".to_string(),
+    };
 
     if is_stream {
-        Ok(relay_sse(upstream, &payload))
+        Ok(relay_sse(upstream, &payload, state.clone(), usage_ctx))
     } else {
-        Ok(relay_json_async(upstream).await)
+        Ok(relay_json_async(upstream, state.clone(), usage_ctx).await)
     }
+}
+
+/// Context threaded into the relays so they can persist usage after the request.
+struct UsageCtx {
+    provider: String,
+    model: String,
+    connection_id: String,
+    api_key: String,
+    endpoint: String,
 }
 
 /// Extract inbound API key from Authorization: Bearer or x-api-key
@@ -159,11 +206,17 @@ async fn execute_upstream(
             }
         }
         for (k, v) in &static_headers {
-            if let (Ok(name), Ok(val)) = (HeaderName::try_from(k.as_str()), HeaderValue::from_str(v)) {
+            if let (Ok(name), Ok(val)) =
+                (HeaderName::try_from(k.as_str()), HeaderValue::from_str(v))
+            {
                 hdrs.insert(name, val);
             }
         }
-        let req = state.client.post(&transport.base_url).headers(hdrs).body(payload.clone());
+        let req = state
+            .client
+            .post(&transport.base_url)
+            .headers(hdrs)
+            .body(payload.clone());
 
         match req.send().await {
             Err(e) => {
@@ -173,13 +226,28 @@ async fn execute_upstream(
                     tokio::time::sleep(Duration::from_secs(3)).await;
                     continue;
                 }
-                return Err(ChatError { status: StatusCode::BAD_GATEWAY, message: format!("upstream fetch: {e}") });
+                return Err(ChatError {
+                    status: StatusCode::BAD_GATEWAY,
+                    message: format!("upstream fetch: {e}"),
+                });
             }
             Ok(r) => {
                 let s = r.status().as_u16();
-                if s == 502 && attempts_502 > 0 { attempts_502 -= 1; tokio::time::sleep(Duration::from_secs(3)).await; continue; }
-                if s == 503 && attempts_503 > 0 { attempts_503 -= 1; tokio::time::sleep(Duration::from_secs(2)).await; continue; }
-                if s == 504 && attempts_504 > 0 { attempts_504 -= 1; tokio::time::sleep(Duration::from_secs(3)).await; continue; }
+                if s == 502 && attempts_502 > 0 {
+                    attempts_502 -= 1;
+                    tokio::time::sleep(Duration::from_secs(3)).await;
+                    continue;
+                }
+                if s == 503 && attempts_503 > 0 {
+                    attempts_503 -= 1;
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                    continue;
+                }
+                if s == 504 && attempts_504 > 0 {
+                    attempts_504 -= 1;
+                    tokio::time::sleep(Duration::from_secs(3)).await;
+                    continue;
+                }
                 return Ok(r);
             }
         }
@@ -191,7 +259,13 @@ async fn execute_upstream(
 /// Ported from Go's relayOpenAISSE (chat_transport.go:232): for each `data:`
 /// line, parse → normalize → re-emit as `data: <json>\n\n`; accumulate usage;
 /// inject the final usage chunk (+2000 buffer) on finish; emit `data: [DONE]\n\n`.
-fn relay_sse(upstream: reqwest::Response, request_body: &Value) -> Response {
+/// After the stream ends, persists the accumulated usage (M7).
+fn relay_sse(
+    upstream: reqwest::Response,
+    request_body: &Value,
+    state: AppState,
+    usage_ctx: UsageCtx,
+) -> Response {
     let request_body = request_body.clone();
     let stream = async_stream::stream! {
         let mut byte_stream = upstream.bytes_stream();
@@ -234,12 +308,48 @@ fn relay_sse(upstream: reqwest::Response, request_body: &Value) -> Response {
         if !done_seen {
             yield Ok::<Bytes, std::io::Error>(Bytes::from_static(b"data: [DONE]\n\n"));
         }
+        // Persist usage after the stream completes (M7). If the provider did
+        // not report usage, estimate the same way the client-visible chunk did.
+        if !usage.valid && content_chars > 0 {
+            usage.prompt = estimate_json_tokens(&request_body);
+            usage.completion = ((content_chars + 3) / 4) as i64;
+            usage.valid = true;
+        }
+        // `usage.prompt` is raw; +2000 exists only in the emitted chunk.
+        let prompt = usage.prompt.max(0);
+        let completion = usage.completion.max(0);
+        if prompt > 0 || completion > 0 {
+            let entry = crate::db::ChatUsageEntry {
+                timestamp: String::new(),
+                provider: usage_ctx.provider,
+                model: usage_ctx.model,
+                connection_id: usage_ctx.connection_id,
+                api_key: usage_ctx.api_key,
+                endpoint: usage_ctx.endpoint,
+                status: "ok".to_string(),
+                cost: 0.0,
+                tokens: crate::db::ChatUsage {
+                    prompt,
+                    completion,
+                    total: prompt + completion,
+                    cached: usage.cached,
+                    reasoning: usage.reasoning,
+                    cache_creation: usage.cache_creation,
+                },
+            };
+            if let Err(e) = state.db.save_chat_usage(entry).await {
+                tracing::warn!("usage save failed: {e}");
+            }
+        }
     };
 
     let mut resp = Response::new(Body::from_stream(stream));
     *resp.status_mut() = StatusCode::OK;
     let h = resp.headers_mut();
-    h.insert("content-type", HeaderValue::from_static("text/event-stream"));
+    h.insert(
+        "content-type",
+        HeaderValue::from_static("text/event-stream"),
+    );
     h.insert("cache-control", HeaderValue::from_static("no-cache"));
     h.insert("connection", HeaderValue::from_static("keep-alive"));
     h.insert("access-control-allow-origin", HeaderValue::from_static("*"));
@@ -247,23 +357,38 @@ fn relay_sse(upstream: reqwest::Response, request_body: &Value) -> Response {
 }
 
 /// Non-streaming JSON path: read the whole upstream body, apply the same-format
-/// normalization (Go normalizeNonStreaming), and return it as JSON.
-pub async fn relay_json_async(upstream: reqwest::Response) -> Response {
+/// normalization (Go normalizeNonStreaming), persist usage (M7), and return JSON.
+async fn relay_json_async(
+    upstream: reqwest::Response,
+    state: AppState,
+    usage_ctx: UsageCtx,
+) -> Response {
     let status = upstream.status();
     let bytes = match upstream.bytes().await {
         Ok(b) => b,
         Err(e) => {
             warn!("upstream body read failed: {e}");
-            return ChatError { status: StatusCode::BAD_GATEWAY, message: "upstream body read failed".into() }.into_response();
+            return ChatError {
+                status: StatusCode::BAD_GATEWAY,
+                message: "upstream body read failed".into(),
+            }
+            .into_response();
         }
     };
     let mut val: Value = match serde_json::from_slice(&bytes) {
         Ok(v) => v,
-        Err(_) => return Response::builder().status(status).body(Body::from(bytes)).unwrap(),
+        Err(_) => {
+            return Response::builder()
+                .status(status)
+                .body(Body::from(bytes))
+                .unwrap()
+        }
     };
     if let Some(obj) = val.as_object_mut() {
-        obj.entry("object").or_insert(Value::String("chat.completion".into()));
-        obj.entry("created").or_insert(Value::Number(serde_json::Number::from(now_unix_secs())));
+        obj.entry("object")
+            .or_insert(Value::String("chat.completion".into()));
+        obj.entry("created")
+            .or_insert(Value::Number(serde_json::Number::from(now_unix_secs())));
         obj.remove("prompt_filter_results");
         if let Some(Value::Array(choices)) = obj.get_mut("choices") {
             for c in choices.iter_mut() {
@@ -273,10 +398,58 @@ pub async fn relay_json_async(upstream: reqwest::Response) -> Response {
             }
         }
     }
+
+    // Persist usage (M7). Client-visible usage gets +2000 added below; store the
+    // raw provider counts (Go subtracts the buffer before persisting).
+    let prompt_raw = val
+        .get("usage")
+        .and_then(|u| u.get("prompt_tokens"))
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    let completion_raw = val
+        .get("usage")
+        .and_then(|u| u.get("completion_tokens"))
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    if prompt_raw > 0 || completion_raw > 0 {
+        let entry = crate::db::ChatUsageEntry {
+            timestamp: String::new(),
+            provider: usage_ctx.provider,
+            model: usage_ctx.model,
+            connection_id: usage_ctx.connection_id,
+            api_key: usage_ctx.api_key,
+            endpoint: usage_ctx.endpoint,
+            status: "ok".to_string(),
+            cost: 0.0,
+            tokens: crate::db::ChatUsage {
+                prompt: prompt_raw.max(0),
+                completion: completion_raw,
+                total: prompt_raw + completion_raw,
+                cached: 0,
+                reasoning: 0,
+                cache_creation: 0,
+            },
+        };
+        // add the +2000 buffer to the client-visible usage (Go parity)
+        if let Some(u) = val.get_mut("usage").and_then(|v| v.as_object_mut()) {
+            if let Some(p) = u.get("prompt_tokens").and_then(|v| v.as_i64()) {
+                u.insert("prompt_tokens".into(), Value::Number((p + 2000).into()));
+            }
+            if let Some(t) = u.get("total_tokens").and_then(|v| v.as_i64()) {
+                u.insert("total_tokens".into(), Value::Number((t + 2000).into()));
+            }
+        }
+        if let Err(e) = state.db.save_chat_usage(entry).await {
+            tracing::warn!("usage save failed: {e}");
+        }
+    }
+
     Response::builder()
         .status(status)
         .header("content-type", "application/json")
-        .body(Body::from(serde_json::to_vec(&val).unwrap_or_else(|_| Vec::new())))
+        .body(Body::from(
+            serde_json::to_vec(&val).unwrap_or_else(|_| Vec::new()),
+        ))
         .unwrap()
 }
 
@@ -294,7 +467,9 @@ struct StreamUsage {
 /// object/created defaults, drop prompt_filter_results/content_filter_results,
 /// count content chars, accumulate max usage.
 fn normalize_chunk(chunk: &mut Value, content_chars: &mut usize, usage: &mut StreamUsage) {
-    let Some(obj) = chunk.as_object_mut() else { return };
+    let Some(obj) = chunk.as_object_mut() else {
+        return;
+    };
 
     let id_needs_fix = match obj.get("id").and_then(|v| v.as_str()) {
         Some(s) if s == "chat" || s == "completion" => true,
@@ -302,19 +477,26 @@ fn normalize_chunk(chunk: &mut Value, content_chars: &mut usize, usage: &mut Str
         _ => false,
     };
     if id_needs_fix {
-        obj.insert("id".into(), Value::String(format!("chatcmpl-{}", now_unix_nanos_b36())));
+        obj.insert(
+            "id".into(),
+            Value::String(format!("chatcmpl-{}", now_unix_nanos_b36())),
+        );
     }
 
     let has_choices = matches!(obj.get("choices"), Some(Value::Array(_)));
     if has_choices {
-        obj.entry("object").or_insert(Value::String("chat.completion.chunk".into()));
-        obj.entry("created").or_insert(Value::Number(serde_json::Number::from(now_unix_secs())));
+        obj.entry("object")
+            .or_insert(Value::String("chat.completion.chunk".into()));
+        obj.entry("created")
+            .or_insert(Value::Number(serde_json::Number::from(now_unix_secs())));
     }
     obj.remove("prompt_filter_results");
 
     if let Some(Value::Array(choices)) = obj.get_mut("choices") {
         for c in choices.iter_mut() {
-            let Some(co) = c.as_object_mut() else { continue };
+            let Some(co) = c.as_object_mut() else {
+                continue;
+            };
             co.remove("content_filter_results");
             if let Some(delta) = co.get_mut("delta").and_then(|v| v.as_object_mut()) {
                 if let Some(Value::String(s)) = delta.get("content") {
@@ -330,7 +512,9 @@ fn normalize_chunk(chunk: &mut Value, content_chars: &mut usize, usage: &mut Str
     if let Some(u) = obj.get("usage").and_then(|v| v.as_object()) {
         let max = |k: &str, cur: &mut i64| {
             if let Some(n) = u.get(k).and_then(|v| v.as_i64()) {
-                if n > *cur { *cur = n; }
+                if n > *cur {
+                    *cur = n;
+                }
             }
         };
         max("prompt_tokens", &mut usage.prompt);
@@ -349,12 +533,30 @@ fn is_valuable(chunk: &Value) -> bool {
     };
     for c in choices {
         if let Some(delta) = c.get("delta") {
-            if delta.get("content").and_then(|v| v.as_str()).is_some() { return true; }
-            if delta.get("reasoning_content").and_then(|v| v.as_str()).is_some() { return true; }
-            if delta.get("role").and_then(|v| v.as_str()).is_some() { return true; }
-            if delta.get("tool_calls").and_then(|v| v.as_array()).is_some_and(|a| !a.is_empty()) { return true; }
+            if delta.get("content").and_then(|v| v.as_str()).is_some() {
+                return true;
+            }
+            if delta
+                .get("reasoning_content")
+                .and_then(|v| v.as_str())
+                .is_some()
+            {
+                return true;
+            }
+            if delta.get("role").and_then(|v| v.as_str()).is_some() {
+                return true;
+            }
+            if delta
+                .get("tool_calls")
+                .and_then(|v| v.as_array())
+                .is_some_and(|a| !a.is_empty())
+            {
+                return true;
+            }
         }
-        if c.get("finish_reason").is_some() { return true; }
+        if c.get("finish_reason").is_some() {
+            return true;
+        }
     }
     false
 }
@@ -368,23 +570,50 @@ fn has_finish(chunk: &Value) -> bool {
 
 /// Inject final usage on the finish chunk (+2000 buffer, Go parity). Estimate
 /// when upstream reported no usage.
-fn inject_final_usage(chunk: &mut Value, usage: &StreamUsage, content_chars: usize, request_body: &Value) {
+fn inject_final_usage(
+    chunk: &mut Value,
+    usage: &StreamUsage,
+    content_chars: usize,
+    request_body: &Value,
+) {
     let (prompt, completion, estimated) = if usage.valid {
         (usage.prompt, usage.completion, false)
     } else {
         let prompt = estimate_json_tokens(request_body);
         let mut completion = (content_chars / 4) as i64;
-        if content_chars > 0 && completion == 0 { completion = 1; }
+        if content_chars > 0 && completion == 0 {
+            completion = 1;
+        }
         (prompt, completion, true)
     };
     let mut u = serde_json::Map::new();
-    u.insert("prompt_tokens".into(), Value::Number((prompt + 2000).into()));
+    u.insert(
+        "prompt_tokens".into(),
+        Value::Number((prompt + 2000).into()),
+    );
     u.insert("completion_tokens".into(), Value::Number(completion.into()));
-    u.insert("total_tokens".into(), Value::Number((prompt + completion + 2000).into()));
-    if usage.cached > 0 { u.insert("cached_tokens".into(), Value::Number(usage.cached.into())); }
-    if usage.reasoning > 0 { u.insert("reasoning_tokens".into(), Value::Number(usage.reasoning.into())); }
-    if usage.cache_creation > 0 { u.insert("cache_creation_input_tokens".into(), Value::Number(usage.cache_creation.into())); }
-    if estimated { u.insert("estimated".into(), Value::Bool(true)); }
+    u.insert(
+        "total_tokens".into(),
+        Value::Number((prompt + completion + 2000).into()),
+    );
+    if usage.cached > 0 {
+        u.insert("cached_tokens".into(), Value::Number(usage.cached.into()));
+    }
+    if usage.reasoning > 0 {
+        u.insert(
+            "reasoning_tokens".into(),
+            Value::Number(usage.reasoning.into()),
+        );
+    }
+    if usage.cache_creation > 0 {
+        u.insert(
+            "cache_creation_input_tokens".into(),
+            Value::Number(usage.cache_creation.into()),
+        );
+    }
+    if estimated {
+        u.insert("estimated".into(), Value::Bool(true));
+    }
     if let Some(obj) = chunk.as_object_mut() {
         obj.insert("usage".into(), Value::Object(u));
     }
@@ -413,5 +642,9 @@ fn now_unix_nanos_b36() -> String {
 }
 fn estimate_json_tokens(body: &Value) -> i64 {
     let raw = serde_json::to_vec(body).unwrap_or_default();
-    if raw.is_empty() { 0 } else { ((raw.len() as i64) + 3) / 4 }
+    if raw.is_empty() {
+        0
+    } else {
+        ((raw.len() as i64) + 3) / 4
+    }
 }

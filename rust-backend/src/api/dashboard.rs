@@ -18,6 +18,7 @@ use axum::{
 };
 use serde_json::{json, Value};
 
+use crate::db::CreateConnection;
 use crate::proxy::AppState;
 
 // ---- /api/settings -------------------------------------------------------
@@ -34,14 +35,12 @@ pub async fn settings_get(State(state): State<AppState>) -> impl IntoResponse {
     (StatusCode::OK, Json(settings))
 }
 
-pub async fn settings_patch(
-    State(state): State<AppState>,
-    Json(body): Json<Value>,
-) -> Response {
+pub async fn settings_patch(State(state): State<AppState>, Json(body): Json<Value>) -> Response {
     match state.db.update_settings_safe(body).await {
         Ok(safe) => {
             let mut resp = (StatusCode::OK, Json(safe)).into_response();
-            resp.headers_mut().insert("cache-control", "no-store".parse().unwrap());
+            resp.headers_mut()
+                .insert("cache-control", "no-store".parse().unwrap());
             resp
         }
         Err(e) => {
@@ -63,10 +62,7 @@ pub async fn keys_get(State(state): State<AppState>) -> impl IntoResponse {
     (StatusCode::OK, Json(json!({ "keys": keys })))
 }
 
-pub async fn keys_post(
-    State(state): State<AppState>,
-    Json(body): Json<Value>,
-) -> Response {
+pub async fn keys_post(State(state): State<AppState>, Json(body): Json<Value>) -> Response {
     let name = body.get("name").and_then(|v| v.as_str()).unwrap_or("");
     if name.is_empty() {
         return error_response(StatusCode::BAD_REQUEST, "Name is required");
@@ -80,10 +76,7 @@ pub async fn keys_post(
     }
 }
 
-pub async fn keys_delete(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Response {
+pub async fn keys_delete(State(state): State<AppState>, Path(id): Path<String>) -> Response {
     let removed = state.db.delete_api_key(&id).await;
     if removed {
         (StatusCode::OK, Json(json!({ "success": true }))).into_response()
@@ -99,8 +92,232 @@ pub async fn providers_get(State(state): State<AppState>) -> impl IntoResponse {
     (StatusCode::OK, Json(json!({ "connections": connections })))
 }
 
+/// POST /api/providers — create a connection (apikey). Minimal validation
+/// (provider non-empty, apiKey present unless ollama-local, name present).
+/// Mirrors the Node create route's validation surface.
+pub async fn providers_post(State(state): State<AppState>, Json(body): Json<Value>) -> Response {
+    let provider = body
+        .get("provider")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let api_key = body
+        .get("apiKey")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let name = body
+        .get("name")
+        .or_else(|| body.get("displayName"))
+        .and_then(|v| v.as_str())
+        .unwrap_or(&provider)
+        .to_string();
+
+    if provider.is_empty() {
+        return error_response(StatusCode::BAD_REQUEST, "Invalid provider");
+    }
+    if api_key.is_empty() && provider != "ollama-local" {
+        return error_response(StatusCode::BAD_REQUEST, "API Key is required");
+    }
+    if name.is_empty() {
+        return error_response(StatusCode::BAD_REQUEST, "Name is required");
+    }
+
+    let input = CreateConnection {
+        provider: provider.clone(),
+        auth_type: "apikey".to_string(),
+        name,
+        api_key,
+        priority: body.get("priority").and_then(|v| v.as_i64()),
+        is_active: true,
+        test_status: "unknown".to_string(),
+        email: body.get("email").and_then(|v| v.as_str()).map(String::from),
+        provider_specific_data: body.get("providerSpecificData").cloned(),
+        extra: serde_json::Map::new(),
+    };
+
+    match state.db.create_connection(input).await {
+        Ok(id) => {
+            // Return the created connection (safe — secrets stripped).
+            let conn = state
+                .db
+                .get_connection_full(&id)
+                .await
+                .map(|mut c| {
+                    if let Some(obj) = c.as_object_mut() {
+                        obj.remove("apiKey");
+                        obj.remove("accessToken");
+                        obj.remove("refreshToken");
+                        obj.remove("idToken");
+                    }
+                    c
+                })
+                .unwrap_or(json!({ "id": id }));
+            (StatusCode::CREATED, Json(json!({ "connection": conn }))).into_response()
+        }
+        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    }
+}
+
+/// PUT /api/providers/:id — update a connection.
+pub async fn providers_update(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<Value>,
+) -> Response {
+    match state.db.update_connection_safe(&id, body).await {
+        Ok(Some(conn)) => (StatusCode::OK, Json(json!({ "connection": conn }))).into_response(),
+        Ok(None) => error_response(StatusCode::NOT_FOUND, "Connection not found"),
+        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    }
+}
+
+/// DELETE /api/providers/:id — hard-delete + reorder.
+pub async fn providers_delete(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    if state.db.delete_connection(&id).await {
+        (
+            StatusCode::OK,
+            Json(json!({ "message": "Connection deleted successfully" })),
+        )
+            .into_response()
+    } else {
+        error_response(StatusCode::NOT_FOUND, "Connection not found")
+    }
+}
+
+/// POST /api/providers/:id/test — probe the upstream connection.
+///
+/// For apikey providers with a native OpenAI transport, GET the provider's
+/// /models endpoint with the stored key; valid iff HTTP 200. Writes testStatus
+/// (active|error) + lastError/lastErrorAt back to the row. Returns {valid,error}.
+pub async fn providers_test(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    let Some(conn) = state.db.get_connection_full(&id).await else {
+        return error_response(StatusCode::NOT_FOUND, "Connection not found");
+    };
+    let provider = conn.get("provider").and_then(|v| v.as_str()).unwrap_or("");
+    let api_key = conn.get("apiKey").and_then(|v| v.as_str()).unwrap_or("");
+    if api_key.is_empty() {
+        return error_response(StatusCode::BAD_REQUEST, "No API key on this connection");
+    }
+
+    // Resolve the provider's native transport to find its base URL + auth.
+    // We derive a /models probe URL from the transport base (strip the
+    // /chat/completions suffix) or fall back to a best-effort GET.
+    let (models_url, auth_header, auth_scheme, headers) =
+        match crate::snapshot::resolve(&format!("{provider}/__probe__")) {
+            Some(r) => {
+                // transport.base_url is the chat completions URL; derive /models.
+                let base = r.transport.base_url.trim_end_matches('/').to_string();
+                let mu = base
+                    .trim_end_matches("/chat/completions")
+                    .trim_end_matches("/completions")
+                    .to_string();
+                let probe_url = if provider == "openrouter" {
+                    "https://openrouter.ai/api/v1/auth/key".to_string()
+                } else {
+                    format!("{mu}/models")
+                };
+                (
+                    probe_url,
+                    r.transport.auth_header,
+                    r.transport.auth_scheme,
+                    r.transport.headers,
+                )
+            }
+            None => {
+                // No native transport in the snapshot — we can't probe generically.
+                return error_response(
+                    StatusCode::NOT_IMPLEMENTED,
+                    "Connection test not supported for this provider (no native transport)",
+                );
+            }
+        };
+
+    let client = &state.client;
+    // Build the full header set up front (reqwest consumes it via .headers()).
+    let mut hdrs = axum::http::HeaderMap::new();
+    let token = if auth_scheme.eq_ignore_ascii_case("bearer") {
+        format!("Bearer {api_key}")
+    } else {
+        api_key.to_string()
+    };
+    let header_name = if auth_header.is_empty() {
+        "authorization"
+    } else {
+        auth_header.as_str()
+    };
+    if let (Ok(name), Ok(val)) = (
+        axum::http::HeaderName::try_from(header_name),
+        axum::http::HeaderValue::from_str(&token),
+    ) {
+        hdrs.insert(name, val);
+    }
+    for (k, v) in &headers {
+        if let (Ok(name), Ok(val)) = (
+            axum::http::HeaderName::try_from(k.as_str()),
+            axum::http::HeaderValue::from_str(v),
+        ) {
+            hdrs.insert(name, val);
+        }
+    }
+    let req = client.get(&models_url).headers(hdrs);
+
+    let result = req.send().await;
+    let (valid, error_msg) = match result {
+        Ok(r) => {
+            let status = r.status().as_u16();
+            if status == 200 {
+                (true, Value::Null)
+            } else {
+                (false, Value::String(format!("HTTP {status}")))
+            }
+        }
+        Err(e) => (false, Value::String(format!("network error: {e}"))),
+    };
+
+    // Write testStatus back to the row.
+    let now = iso_now();
+    let patch = json!({
+        "testStatus": if valid { "active" } else { "error" },
+        "lastError": if valid { Value::Null } else { error_msg.clone() },
+        "lastErrorAt": if valid { Value::Null } else { Value::String(now) },
+    });
+    let _ = state.db.update_connection_safe(&id, patch).await;
+
+    (
+        StatusCode::OK,
+        Json(json!({ "valid": valid, "error": if valid { Value::Null } else { error_msg }, "refreshed": false })),
+    ).into_response()
+}
+
+// ---- /api/usage (M7) -----------------------------------------------------
+
+pub async fn usage_logs(State(state): State<AppState>) -> impl IntoResponse {
+    let logs = state.db.recent_logs(200).await;
+    (StatusCode::OK, Json(logs))
+}
+
+pub async fn usage_stats(
+    State(state): State<AppState>,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    let period = params.get("period").map(|s| s.as_str()).unwrap_or("7d");
+    let stats = state.db.usage_stats(period).await;
+    (StatusCode::OK, Json(stats))
+}
+
 use axum::response::Response;
 
 fn error_response(status: StatusCode, message: &str) -> Response {
     (status, Json(json!({ "error": message }))).into_response()
+}
+
+fn iso_now() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let (y, mo, d, h, mi, s) = crate::db::unix_to_civil(secs);
+    format!("{y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:{s:02}.000Z")
 }

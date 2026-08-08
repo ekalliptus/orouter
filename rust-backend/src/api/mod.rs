@@ -10,7 +10,10 @@ use axum::{http::StatusCode, response::IntoResponse};
 pub async fn health() -> impl IntoResponse {
     (
         StatusCode::OK,
-        [("content-type", "application/json"), ("cache-control", "no-store")],
+        [
+            ("content-type", "application/json"),
+            ("cache-control", "no-store"),
+        ],
         r#"{"ok":true}"#,
     )
 }

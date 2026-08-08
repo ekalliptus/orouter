@@ -83,10 +83,33 @@ async fn main() {
 
     // Protected dashboard routes — session-gated via require_auth middleware.
     let dashboard_routes = Router::new()
-        .route("/api/settings", get(api::dashboard::settings_get).patch(api::dashboard::settings_patch))
-        .route("/api/keys", get(api::dashboard::keys_get).post(api::dashboard::keys_post))
-        .route("/api/keys/:id", axum::routing::delete(api::dashboard::keys_delete))
-        .route("/api/providers", get(api::dashboard::providers_get))
+        .route(
+            "/api/settings",
+            get(api::dashboard::settings_get).patch(api::dashboard::settings_patch),
+        )
+        .route(
+            "/api/keys",
+            get(api::dashboard::keys_get).post(api::dashboard::keys_post),
+        )
+        .route(
+            "/api/keys/:id",
+            axum::routing::delete(api::dashboard::keys_delete),
+        )
+        .route(
+            "/api/providers",
+            get(api::dashboard::providers_get).post(api::dashboard::providers_post),
+        )
+        .route(
+            "/api/providers/:id",
+            axum::routing::put(api::dashboard::providers_update)
+                .delete(api::dashboard::providers_delete),
+        )
+        .route(
+            "/api/providers/:id/test",
+            axum::routing::post(api::dashboard::providers_test),
+        )
+        .route("/api/usage/logs", get(api::dashboard::usage_logs))
+        .route("/api/usage/stats", get(api::dashboard::usage_stats))
         .layer(middleware::from_fn(auth::middleware::require_auth))
         .with_state(state.clone());
 

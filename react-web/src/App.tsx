@@ -11,6 +11,7 @@ import LoginPage from "@/pages/LoginPage";
 import EndpointPage from "@/pages/EndpointPage";
 import ProvidersPage from "@/pages/ProvidersPage";
 import KeysPage from "@/pages/KeysPage";
+import UsagePage from "@/pages/UsagePage";
 import ComingSoonPage from "@/pages/ComingSoonPage";
 
 function LocaleReloader() {
@@ -41,7 +42,7 @@ export default function App() {
           <Route index element={<EndpointPage />} />
           <Route path="providers" element={<ProvidersPage />} />
           <Route path="keys" element={<KeysPage />} />
-          <Route path="usage" element={<ComingSoonPage title="Usage" emoji="📊" />} />
+          <Route path="usage" element={<UsagePage />} />
           <Route path="combos" element={<ComingSoonPage title="Combos" emoji="🧩" />} />
           <Route path="cli-tools" element={<ComingSoonPage title="CLI Tools" emoji="🛠️" />} />
           <Route path="profile" element={<ComingSoonPage title="Settings" emoji="⚙️" />} />

@@ -15,7 +15,7 @@ const NAV: NavItem[] = [
   { to: "/dashboard", label: "Endpoint", emoji: "🔌" },
   { to: "/dashboard/keys", label: "API Keys", emoji: "🔑" },
   { to: "/dashboard/providers", label: "Providers", emoji: "🤖" },
-  { to: "/dashboard/usage", label: "Usage", emoji: "📊", soon: true },
+  { to: "/dashboard/usage", label: "Usage", emoji: "📊" },
   { to: "/dashboard/combos", label: "Combos", emoji: "🧩", soon: true },
   { to: "/dashboard/cli-tools", label: "CLI Tools", emoji: "🛠️", soon: true },
   { to: "/dashboard/profile", label: "Settings", emoji: "⚙️", soon: true },

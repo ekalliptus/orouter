@@ -1,14 +1,14 @@
 //! Shared SQLite access — opens the SAME file Node/Go use and runs the same
-//! PRAGMAs (WAL, busy_timeout=5000). For v1 this is read-only on the proxy
-//! path: we read provider credentials + settings + validate inbound API keys.
-//! No schema migrations: the file is created/owned by Node; we only read.
+//! PRAGMAs (WAL, busy_timeout=5000). Reads + writes provider credentials,
+//! settings, API keys, usage history/daily. No schema migrations: the file's
+//! tables are created/owned by Node; we reuse them as-is.
 //!
-//! Mirrors backend/internal/database/database.go + repos.go.
+//! Mirrors backend/internal/database/database.go + repos.go + chat_writes.go.
 
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use serde_json::Value;
 use tokio::sync::Mutex;
 
@@ -20,6 +20,72 @@ pub struct Db {
     inner: std::sync::Arc<Mutex<Connection>>,
 }
 
+/// Idempotent schema bootstrap. Rust can now start on an empty DATA_DIR without
+/// Node/Go creating tables first. Existing databases are untouched.
+fn ensure_schema(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS settings (
+          id INTEGER PRIMARY KEY,
+          data TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS apiKeys (
+          id TEXT PRIMARY KEY,
+          key TEXT UNIQUE,
+          name TEXT,
+          machineId TEXT,
+          isActive INTEGER DEFAULT 1,
+          createdAt TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS providerConnections (
+          id TEXT PRIMARY KEY,
+          provider TEXT NOT NULL,
+          authType TEXT NOT NULL,
+          name TEXT,
+          email TEXT,
+          priority INTEGER,
+          isActive INTEGER DEFAULT 1,
+          data TEXT NOT NULL,
+          createdAt TEXT NOT NULL,
+          updatedAt TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_pc_provider ON providerConnections(provider);
+        CREATE INDEX IF NOT EXISTS idx_pc_provider_active ON providerConnections(provider, isActive);
+        CREATE INDEX IF NOT EXISTS idx_pc_priority ON providerConnections(provider, priority);
+        CREATE TABLE IF NOT EXISTS usageHistory (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          timestamp TEXT NOT NULL,
+          provider TEXT,
+          model TEXT,
+          connectionId TEXT,
+          apiKey TEXT,
+          endpoint TEXT,
+          promptTokens INTEGER DEFAULT 0,
+          completionTokens INTEGER DEFAULT 0,
+          cost REAL DEFAULT 0,
+          status TEXT,
+          tokens TEXT,
+          meta TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_uh_ts ON usageHistory(timestamp DESC);
+        CREATE INDEX IF NOT EXISTS idx_uh_provider ON usageHistory(provider);
+        CREATE INDEX IF NOT EXISTS idx_uh_model ON usageHistory(model);
+        CREATE INDEX IF NOT EXISTS idx_uh_conn ON usageHistory(connectionId);
+        CREATE TABLE IF NOT EXISTS usageDaily (
+          dateKey TEXT PRIMARY KEY,
+          data TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS _meta (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL
+        );
+        INSERT INTO settings(id, data)
+        VALUES(1, '{"requireLogin":true,"requireApiKey":true}')
+        ON CONFLICT(id) DO NOTHING;
+        "#,
+    )
+}
+
 impl Db {
     /// Open the shared DB read/write. If the file doesn't exist we still return
     /// a handle that fails queries gracefully — the Go server likewise logs but
@@ -28,13 +94,16 @@ impl Db {
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        let conn = Connection::open(path)
-            .with_context(|| format!("open sqlite at {}", path.display()))?;
+        let conn =
+            Connection::open(path).with_context(|| format!("open sqlite at {}", path.display()))?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         conn.pragma_update(None, "busy_timeout", 5000)?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
-        Ok(Self { inner: std::sync::Arc::new(Mutex::new(conn)) })
+        ensure_schema(&conn)?;
+        Ok(Self {
+            inner: std::sync::Arc::new(Mutex::new(conn)),
+        })
     }
 
     /// Read a single active credential blob for a provider, picking fill-first
@@ -47,27 +116,35 @@ impl Db {
         let model = model.to_string();
         tokio::task::spawn_blocking(move || -> Option<Credential> {
             let conn = conn.blocking_lock();
-            let mut stmt = conn.prepare(
-                "SELECT data FROM providerConnections
+            let mut stmt = conn
+                .prepare(
+                    "SELECT id, data FROM providerConnections
                  WHERE provider = ?1 AND isActive = 1
                  ORDER BY priority ASC",
-            )
-            .ok()?;
-            let rows: Vec<String> = stmt
-                .query_map([&provider], |r| r.get::<_, String>(0))
+                )
+                .ok()?;
+            let rows: Vec<(String, String)> = stmt
+                .query_map([&provider], |r| {
+                    Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+                })
                 .ok()?
                 .filter_map(Result::ok)
                 .collect();
             drop(stmt);
 
-            for data_json in rows {
-                let Ok(data) = serde_json::from_str::<Value>(&data_json) else { continue };
+            for (connection_id, data_json) in rows {
+                let Ok(data) = serde_json::from_str::<Value>(&data_json) else {
+                    continue;
+                };
                 let obj = match data.as_object() {
                     Some(o) => o,
                     None => continue,
                 };
                 // OAuth refresh / expiry → can't handle natively yet.
-                if obj.get("refreshToken").and_then(|v| v.as_str()).is_some_and(|s| !s.is_empty())
+                if obj
+                    .get("refreshToken")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|s| !s.is_empty())
                     || obj.get("expiresAt").and_then(|v| v.as_str()).is_some()
                 {
                     continue;
@@ -80,16 +157,16 @@ impl Db {
                     .get("apiKey")
                     .and_then(|v| v.as_str())
                     .filter(|s| !s.is_empty())
-                    .or_else(|| obj.get("accessToken").and_then(|v| v.as_str()).filter(|s| !s.is_empty()))
+                    .or_else(|| {
+                        obj.get("accessToken")
+                            .and_then(|v| v.as_str())
+                            .filter(|s| !s.is_empty())
+                    })
                     .map(|s| s.to_string());
                 if let Some(cred) = credential {
                     return Some(Credential {
                         secret: cred,
-                        connection_id: obj
-                            .get("id")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string(),
+                        connection_id,
                     });
                 }
             }
@@ -107,17 +184,15 @@ impl Db {
         tokio::task::spawn_blocking(move || {
             let conn = conn.blocking_lock();
             let row: Option<String> = conn
-                .query_row(
-                    "SELECT value FROM settings WHERE key = 'settings' LIMIT 1",
-                    [],
-                    |r| r.get::<_, String>(0),
-                )
+                .query_row("SELECT data FROM settings WHERE id = 1", [], |r| {
+                    r.get::<_, String>(0)
+                })
                 .ok();
-            let Some(json) = row else { return false };
+            let Some(json) = row else { return true }; // fail-closed
             serde_json::from_str::<Value>(&json)
                 .ok()
                 .and_then(|v| v.get("requireApiKey").and_then(|v| v.as_bool()))
-                .unwrap_or(false)
+                .unwrap_or(true)
         })
         .await
         .unwrap_or(false)
@@ -143,7 +218,9 @@ impl Db {
         tokio::task::spawn_blocking(move || -> serde_json::Value {
             let conn = conn.blocking_lock();
             let row: Option<String> = conn
-                .query_row("SELECT data FROM settings WHERE id = 1", [], |r| r.get::<_, String>(0))
+                .query_row("SELECT data FROM settings WHERE id = 1", [], |r| {
+                    r.get::<_, String>(0)
+                })
                 .ok();
             let raw: Value = row
                 .and_then(|s| serde_json::from_str(&s).ok())
@@ -165,7 +242,9 @@ impl Db {
             let tx = conn.transaction()?;
 
             let row: Option<String> = tx
-                .query_row("SELECT data FROM settings WHERE id = 1", [], |r| r.get::<_, String>(0))
+                .query_row("SELECT data FROM settings WHERE id = 1", [], |r| {
+                    r.get::<_, String>(0)
+                })
                 .ok();
             let raw: Value = row
                 .and_then(|s| serde_json::from_str(&s).ok())
@@ -181,14 +260,26 @@ impl Db {
 
             // Password change: verify current, hash new.
             if let Some(obj) = body.as_object_mut() {
-                if let Some(new_pw) = obj.remove("newPassword").and_then(|v| v.as_str().map(String::from)) {
-                    let stored_hash = current.get("password").and_then(|v| v.as_str()).unwrap_or("");
+                if let Some(new_pw) = obj
+                    .remove("newPassword")
+                    .and_then(|v| v.as_str().map(String::from))
+                {
+                    let stored_hash = current
+                        .get("password")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
                     if !stored_hash.is_empty() {
-                        let cur_pw = obj.remove("currentPassword").and_then(|v| v.as_str().map(String::from)).unwrap_or_default();
+                        let cur_pw = obj
+                            .remove("currentPassword")
+                            .and_then(|v| v.as_str().map(String::from))
+                            .unwrap_or_default();
                         if !bcrypt_verify(&cur_pw, stored_hash).unwrap_or(false) {
                             anyhow::bail!("Invalid current password");
                         }
-                    } else if let Some(cur_pw) = obj.remove("currentPassword").and_then(|v| v.as_str().map(String::from)) {
+                    } else if let Some(cur_pw) = obj
+                        .remove("currentPassword")
+                        .and_then(|v| v.as_str().map(String::from))
+                    {
                         // first-time set: allow empty or the default "123456"
                         if cur_pw != "123456" {
                             anyhow::bail!("Invalid current password");
@@ -261,7 +352,11 @@ impl Db {
     /// Create an API key in the `sk-<machineId>-<keyId>-<crc8>` format and
     /// persist it. Mirrors src/shared/utils/apiKey.js generateApiKeyWithMachine
     /// + apiKeysRepo.createApiKey. `machine_id` must be the 16-char machine id.
-    pub async fn create_api_key(&self, name: &str, machine_id: &str) -> anyhow::Result<serde_json::Value> {
+    pub async fn create_api_key(
+        &self,
+        name: &str,
+        machine_id: &str,
+    ) -> anyhow::Result<serde_json::Value> {
         anyhow::ensure!(!machine_id.is_empty(), "machineId is required");
         let id = uuid::Uuid::new_v4().to_string();
         let created_at = now_iso8601();
@@ -300,7 +395,8 @@ impl Db {
         let id = id.to_string();
         tokio::task::spawn_blocking(move || {
             let conn = conn.blocking_lock();
-            let affected = conn.execute("DELETE FROM apiKeys WHERE id = ?1", rusqlite::params![id])?;
+            let affected =
+                conn.execute("DELETE FROM apiKeys WHERE id = ?1", rusqlite::params![id])?;
             Ok::<_, rusqlite::Error>(affected > 0)
         })
         .await
@@ -399,12 +495,783 @@ impl Db {
         .await
         .unwrap_or(false)
     }
+
+    // ============================================================
+    // Provider connection CRUD — port of src/lib/db/repos/connectionsRepo.js.
+    // Row contract: 9 base columns + a `data` JSON blob holding everything else
+    // (apiKey, testStatus, providerSpecificData, …). Reads spread `data` then
+    // overlay base columns, so any non-base field the frontend needs must live
+    // in `data`.
+    // ============================================================
+
+    /// Create a connection (apikey authType). Mirrors createProviderConnection's
+    /// new-row branch: uuid id, now timestamps, priority defaults to max+1,
+    /// then reorder priorities 1..N within the provider. Returns the created id.
+    pub async fn create_connection(&self, input: CreateConnection) -> anyhow::Result<String> {
+        let conn = self.inner.clone();
+        let created_id = tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
+            let mut conn = conn.blocking_lock();
+            let tx = conn.transaction()?;
+            let now = now_iso8601();
+            let id = uuid::Uuid::new_v4().to_string();
+
+            // priority: use provided, else max(existing)+1
+            let priority: i64 = match input.priority {
+                Some(p) => p,
+                None => {
+                    let max: i64 = tx
+                        .query_row(
+                            "SELECT COALESCE(MAX(priority), 0) FROM providerConnections WHERE provider = ?1",
+                            rusqlite::params![&input.provider],
+                            |r| r.get(0),
+                        )
+                        .unwrap_or(0);
+                    max + 1
+                }
+            };
+
+            // Build the `data` JSON blob: apiKey, testStatus, providerSpecificData,
+            // plus any optional fields the caller passed through `extra`.
+            let mut data = serde_json::Map::new();
+            data.insert("apiKey".into(), Value::String(input.api_key));
+            data.insert("testStatus".into(), Value::String(input.test_status.clone()));
+            if let Some(psd) = input.provider_specific_data {
+                data.insert("providerSpecificData".into(), psd);
+            }
+            for (k, v) in input.extra {
+                data.insert(k, v);
+            }
+            let data_json = serde_json::to_string(&Value::Object(data))?;
+
+            tx.execute(
+                "INSERT INTO providerConnections(id, provider, authType, name, email, priority, isActive, data, createdAt, updatedAt)
+                 VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                rusqlite::params![
+                    &id, &input.provider, input.auth_type, &input.name, input.email.as_deref(),
+                    priority, if input.is_active { 1 } else { 0 }, &data_json, &now, &now
+                ],
+            )?;
+            reorder_priorities(&tx, &input.provider)?;
+            tx.commit()?;
+            Ok(id)
+        })
+        .await??;
+        Ok(created_id)
+    }
+
+    /// Update a connection (PUT /api/providers/:id). Shallow-merges incoming
+    /// fields over the existing row, rebuilds the `data` blob, sets updatedAt.
+    /// Returns the updated safe connection (secrets stripped) or None if missing.
+    pub async fn update_connection_safe(
+        &self,
+        id: &str,
+        patch: Value,
+    ) -> anyhow::Result<Option<Value>> {
+        let conn = self.inner.clone();
+        let id = id.to_string();
+        let updated = tokio::task::spawn_blocking(move || -> anyhow::Result<Option<Value>> {
+            let mut conn = conn.blocking_lock();
+            let tx = conn.transaction()?;
+            let row = tx.query_row(
+                "SELECT id, provider, authType, name, email, priority, isActive, data, createdAt FROM providerConnections WHERE id = ?1",
+                rusqlite::params![&id],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
+                        r.get::<_, Option<String>>(3)?, r.get::<_, Option<String>>(4)?,
+                        r.get::<_, i64>(5)?, r.get::<_, i64>(6)?,
+                        r.get::<_, String>(7)?, r.get::<_, String>(8)?,
+                    ))
+                },
+            );
+            let (rid, provider, auth_type, mut name, mut email, mut priority, mut is_active, data_json, created_at) = match row {
+                Ok(r) => r,
+                Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
+                Err(e) => return Err(e.into()),
+            };
+
+            // Parse existing data blob.
+            let mut data: serde_json::Map<String, Value> = serde_json::from_str(&data_json).unwrap_or_default();
+            // Apply patch: base columns override, everything else merges into data.
+            if let Some(po) = patch.as_object() {
+                if let Some(v) = po.get("name").and_then(|v| v.as_str()) { name = Some(v.to_string()); }
+                if let Some(v) = po.get("email").and_then(|v| v.as_str()) { email = Some(v.to_string()); }
+                if let Some(v) = po.get("priority").and_then(|v| v.as_i64()) { priority = v; }
+                if let Some(v) = po.get("isActive") { is_active = if v.as_bool().unwrap_or(true) { 1 } else { 0 }; }
+                // apiKey only for apikey authType.
+                if auth_type == "apikey" {
+                    if let Some(v) = po.get("apiKey").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+                        data.insert("apiKey".into(), Value::String(v.to_string()));
+                    }
+                }
+                // testStatus / lastError / lastErrorAt.
+                for k in ["testStatus", "lastError", "lastErrorAt"] {
+                    if let Some(v) = po.get(k) {
+                        if v.is_null() { data.remove(k); } else { data.insert(k.into(), v.clone()); }
+                    }
+                }
+                // providerSpecificData shallow-merge.
+                if let Some(incoming) = po.get("providerSpecificData").and_then(|v| v.as_object()) {
+                    let existing = data.entry("providerSpecificData").or_insert_with(|| Value::Object(Default::default()));
+                    if let Some(eo) = existing.as_object_mut() {
+                        for (k, v) in incoming { eo.insert(k.clone(), v.clone()); }
+                    } else {
+                        data.insert("providerSpecificData".into(), Value::Object(incoming.clone()));
+                    }
+                }
+                // globalPriority / defaultModel → data.
+                for k in ["globalPriority", "defaultModel"] {
+                    if let Some(v) = po.get(k) {
+                        if v.is_null() { data.remove(k); } else { data.insert(k.into(), v.clone()); }
+                    }
+                }
+            }
+
+            let now = now_iso8601();
+            let data_json = serde_json::to_string(&Value::Object(data))?;
+            tx.execute(
+                "UPDATE providerConnections SET provider=?1, authType=?2, name=?3, email=?4, priority=?5, isActive=?6, data=?7, updatedAt=?8 WHERE id=?9",
+                rusqlite::params![&provider, &auth_type, &name, &email, priority, is_active, &data_json, &now, &rid],
+            )?;
+            let needs_reorder = patch.get("priority").is_some();
+            if needs_reorder {
+                reorder_priorities(&tx, &provider)?;
+            }
+            tx.commit()?;
+
+            // Build safe output: spread data, overlay base, strip secrets.
+            let mut out: Value = serde_json::from_str(&data_json).unwrap_or_else(|_| Value::Object(Default::default()));
+            if let Some(obj) = out.as_object_mut() {
+                obj.insert("id".into(), Value::String(rid));
+                obj.insert("provider".into(), Value::String(provider));
+                obj.insert("authType".into(), Value::String(auth_type));
+                if let Some(n) = name { obj.insert("name".into(), Value::String(n)); }
+                if let Some(e) = email { obj.insert("email".into(), Value::String(e)); }
+                obj.insert("priority".into(), Value::Number(priority.into()));
+                obj.insert("isActive".into(), Value::Bool(is_active == 1));
+                obj.insert("createdAt".into(), Value::String(created_at));
+                obj.insert("updatedAt".into(), Value::String(now));
+                obj.remove("apiKey");
+                obj.remove("accessToken");
+                obj.remove("refreshToken");
+                obj.remove("idToken");
+            }
+            Ok(Some(out))
+        })
+        .await??;
+        Ok(updated)
+    }
+
+    /// Hard-delete a connection by id, then renumber priorities for its provider.
+    /// Returns true if a row was deleted.
+    pub async fn delete_connection(&self, id: &str) -> bool {
+        let conn = self.inner.clone();
+        let id = id.to_string();
+        tokio::task::spawn_blocking(move || -> rusqlite::Result<bool> {
+            let mut conn = conn.blocking_lock();
+            let tx = conn.transaction()?;
+            let provider: Option<String> = tx
+                .query_row(
+                    "SELECT provider FROM providerConnections WHERE id = ?1",
+                    rusqlite::params![&id],
+                    |r| r.get(0),
+                )
+                .ok();
+            let Some(provider) = provider else {
+                return Ok(false);
+            };
+            let affected = tx.execute(
+                "DELETE FROM providerConnections WHERE id = ?1",
+                rusqlite::params![&id],
+            )?;
+            if affected > 0 {
+                reorder_priorities(&tx, &provider)?;
+            }
+            tx.commit()?;
+            Ok(affected > 0)
+        })
+        .await
+        .ok()
+        .and_then(|r| r.ok())
+        .unwrap_or(false)
+    }
+
+    /// Read a single connection's full data blob (including secrets) — used by
+    /// the connection-test handler to fetch the apiKey + transport info.
+    pub async fn get_connection_full(&self, id: &str) -> Option<Value> {
+        let conn = self.inner.clone();
+        let id = id.to_string();
+        tokio::task::spawn_blocking(move || -> Option<Value> {
+            let conn = conn.blocking_lock();
+            let row = conn.query_row(
+                "SELECT id, provider, authType, name, email, priority, isActive, data, createdAt, updatedAt FROM providerConnections WHERE id = ?1",
+                rusqlite::params![&id],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
+                        r.get::<_, Option<String>>(3)?, r.get::<_, Option<String>>(4)?,
+                        r.get::<_, i64>(5)?, r.get::<_, i64>(6)?,
+                        r.get::<_, String>(7)?, r.get::<_, String>(8)?, r.get::<_, String>(9)?,
+                    ))
+                },
+            );
+            let (id, provider, auth_type, name, email, priority, is_active, data_json, created, updated) = row.ok()?;
+            let mut val: Value = serde_json::from_str(&data_json).unwrap_or_else(|_| Value::Object(Default::default()));
+            if let Some(obj) = val.as_object_mut() {
+                obj.insert("id".into(), Value::String(id));
+                obj.insert("provider".into(), Value::String(provider));
+                obj.insert("authType".into(), Value::String(auth_type));
+                if let Some(n) = name { obj.insert("name".into(), Value::String(n)); }
+                if let Some(e) = email { obj.insert("email".into(), Value::String(e)); }
+                obj.insert("priority".into(), Value::Number(priority.into()));
+                obj.insert("isActive".into(), Value::Bool(is_active == 1));
+                obj.insert("createdAt".into(), Value::String(created));
+                obj.insert("updatedAt".into(), Value::String(updated));
+            }
+            Some(val)
+        })
+        .await
+        .ok()
+        .flatten()
+    }
+
+    // ---- M7: usage write path (port of chat_writes.go) --------------------
+
+    /// Persist a completed chat request's usage: usageHistory row + usageDaily
+    /// rollup + lifetime counter, in one transaction. Dedup suppresses repeated
+    /// stream-completion callbacks. Mirrors SaveChatUsage (chat_writes.go:38).
+    pub async fn save_chat_usage(&self, entry: ChatUsageEntry) -> anyhow::Result<()> {
+        let conn = self.inner.clone();
+        tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+            let mut conn = conn.blocking_lock();
+            let tx = conn.transaction()?;
+            let timestamp = if entry.timestamp.is_empty() { now_iso8601() } else { entry.timestamp.clone() };
+            let status = if entry.status.is_empty() { "ok".to_string() } else { entry.status.clone() };
+            let total = if entry.tokens.total == 0 { entry.tokens.prompt + entry.tokens.completion } else { entry.tokens.total };
+
+            let tokens = serde_json::json!({
+                "prompt_tokens": entry.tokens.prompt,
+                "completion_tokens": entry.tokens.completion,
+                "total_tokens": total,
+                "cached_tokens": entry.tokens.cached,
+                "reasoning_tokens": entry.tokens.reasoning,
+                "cache_creation_input_tokens": entry.tokens.cache_creation,
+            });
+            let tokens_json = serde_json::to_string(&tokens)?;
+
+            // Dedup check (same composite equality as Node).
+            let dup: Option<i64> = tx.query_row(
+                "SELECT id FROM usageHistory WHERE timestamp = ?1
+                 AND COALESCE(provider,'') = COALESCE(?2,'')
+                 AND COALESCE(model,'') = COALESCE(?3,'')
+                 AND COALESCE(connectionId,'') = COALESCE(?4,'')
+                 AND COALESCE(apiKey,'') = COALESCE(?5,'')
+                 AND promptTokens = ?6 AND completionTokens = ?7
+                 ORDER BY id DESC LIMIT 1",
+                rusqlite::params![&timestamp, nullable(&entry.provider), nullable(&entry.model), nullable(&entry.connection_id), nullable(&entry.api_key), entry.tokens.prompt, entry.tokens.completion],
+                |r| r.get(0),
+            ).optional()?;
+            if dup.is_some() {
+                tx.commit()?;
+                return Ok(());
+            }
+
+            tx.execute(
+                "INSERT INTO usageHistory(timestamp, provider, model, connectionId, apiKey, endpoint, promptTokens, completionTokens, cost, status, tokens, meta)
+                 VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, '{}')",
+                rusqlite::params![
+                    &timestamp, nullable(&entry.provider), nullable(&entry.model), nullable(&entry.connection_id),
+                    nullable(&entry.api_key), nullable(&entry.endpoint), entry.tokens.prompt, entry.tokens.completion,
+                    entry.cost, &status, &tokens_json
+                ],
+            )?;
+
+            // Daily rollup.
+            let date_key = local_date_key(&timestamp);
+            let mut day: serde_json::Map<String, Value> = tx.query_row(
+                "SELECT data FROM usageDaily WHERE dateKey = ?1", rusqlite::params![&date_key], |r| r.get::<_, String>(0),
+            )
+            .optional()?
+            .and_then(|s| serde_json::from_str::<serde_json::Map<String, Value>>(&s).ok())
+            .unwrap_or_else(new_usage_day);
+            aggregate_chat_usage(&mut day, &entry, total);
+            let day_json = serde_json::to_string(&Value::Object(day))?;
+            tx.execute(
+                "INSERT INTO usageDaily(dateKey, data) VALUES(?1, ?2) ON CONFLICT(dateKey) DO UPDATE SET data = excluded.data",
+                rusqlite::params![&date_key, &day_json],
+            )?;
+
+            // Lifetime counter.
+            let current: String = tx.query_row(
+                "SELECT value FROM _meta WHERE key = 'totalRequestsLifetime'", [], |r| r.get::<_, String>(0),
+            )
+            .optional()?
+            .unwrap_or_else(|| "0".to_string());
+            let n: i64 = current.parse().unwrap_or(0);
+            tx.execute(
+                "INSERT INTO _meta(key, value) VALUES('totalRequestsLifetime', ?1) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                rusqlite::params![(n + 1).to_string()],
+            )?;
+
+            tx.commit()?;
+            Ok(())
+        })
+        .await??;
+        Ok(())
+    }
+
+    /// Recent formatted log lines (GET /api/usage/logs). Each line:
+    /// "DD-MM-YYYY HH:mm:ss | model | PROVIDER | account | sent | received | status".
+    pub async fn recent_logs(&self, limit: i64) -> Vec<String> {
+        let conn = self.inner.clone();
+        let limit = if limit <= 0 { 200 } else { limit };
+        tokio::task::spawn_blocking(move || -> Vec<String> {
+            let conn = conn.blocking_lock();
+            // Connection names (resolved first to avoid cursor deadlock).
+            let mut name_stmt = match conn.prepare("SELECT id, name FROM providerConnections") {
+                Ok(s) => s,
+                Err(_) => return Vec::new(),
+            };
+            let names: std::collections::HashMap<String, String> = name_stmt
+                .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?.unwrap_or_default())))
+                .ok()
+                .into_iter()
+                .flatten()
+                .filter_map(Result::ok)
+                .filter(|(_, n)| !n.is_empty())
+                .collect();
+            drop(name_stmt);
+
+            let mut stmt = match conn.prepare(
+                "SELECT timestamp, provider, model, connectionId, promptTokens, completionTokens, status, tokens
+                 FROM usageHistory ORDER BY id DESC LIMIT ?1",
+            ) {
+                Ok(s) => s,
+                Err(_) => return Vec::new(),
+            };
+            let rows = stmt
+                .query_map(rusqlite::params![limit], |r| {
+                    Ok((
+                        r.get::<_, Option<String>>(0)?.unwrap_or_default(),
+                        r.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                        r.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                        r.get::<_, Option<String>>(3)?.unwrap_or_default(),
+                        r.get::<_, Option<i64>>(4)?,
+                        r.get::<_, Option<i64>>(5)?,
+                        r.get::<_, Option<String>>(6)?.unwrap_or_default(),
+                        r.get::<_, Option<String>>(7)?.unwrap_or_default(),
+                    ))
+                })
+                .ok()
+                .into_iter()
+                .flatten()
+                .filter_map(Result::ok);
+            let mut out = Vec::new();
+            for (ts, provider, model, conn_id, prompt, completion, status, tokens_json) in rows {
+                let p = if provider.is_empty() { "-".to_string() } else { provider.to_uppercase() };
+                let m = if model.is_empty() { "-".to_string() } else { model };
+                let account = if conn_id.is_empty() {
+                    "-".to_string()
+                } else if let Some(n) = names.get(&conn_id) {
+                    n.clone()
+                } else if conn_id.len() >= 8 {
+                    conn_id[..8].to_string()
+                } else {
+                    conn_id
+                };
+                let sent = prompt.map(|n| n.to_string())
+                    .or_else(|| field_from_tokens(&tokens_json, "prompt_tokens"))
+                    .unwrap_or_else(|| "-".into());
+                let received = completion.map(|n| n.to_string())
+                    .or_else(|| field_from_tokens(&tokens_json, "completion_tokens"))
+                    .unwrap_or_else(|| "-".into());
+                let date = format_log_date(&ts);
+                let st = if status.is_empty() { "-".to_string() } else { status };
+                out.push(format!("{date} | {m} | {p} | {account} | {sent} | {received} | {st}"));
+            }
+            out
+        })
+        .await
+        .unwrap_or_default()
+    }
+
+    /// Aggregated usage stats (GET /api/usage/stats?period=). Returns a JSON
+    /// object shaped like the Node response: totals + byProvider/byModel +
+    /// recentRequests. Live-only fields (pending/activeRequests/errorProvider)
+    /// are emitted empty. Period ∈ {today,24h,7d,30d,60d,all}, default 7d.
+    pub async fn usage_stats(&self, period: &str) -> serde_json::Value {
+        let conn = self.inner.clone();
+        let period = period.to_string();
+        tokio::task::spawn_blocking(move || -> serde_json::Value {
+            let conn = conn.blocking_lock();
+            // Determine the cutoff timestamp for the period.
+            let now_secs = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0);
+            let cutoff_secs = match period.as_str() {
+                "today" => Some(now_secs - (now_secs % 86400)),
+                "24h" => Some(now_secs - 86400),
+                "7d" => Some(now_secs - 7 * 86400),
+                "30d" => Some(now_secs - 30 * 86400),
+                "60d" => Some(now_secs - 60 * 86400),
+                "all" => None,
+                _ => Some(now_secs - 7 * 86400), // default 7d
+            };
+            let cutoff_ts = cutoff_secs.map(|s| iso_from_secs(s));
+
+            // Aggregate usageHistory rows in range.
+            let (sql, params): (&str, Vec<Box<dyn rusqlite::ToSql>>) = match &cutoff_ts {
+                Some(ts) => (
+                    "SELECT provider, model, connectionId, apiKey, endpoint, promptTokens, completionTokens, cost, tokens FROM usageHistory WHERE timestamp >= ?1",
+                    vec![Box::new(ts.clone())],
+                ),
+                None => (
+                    "SELECT provider, model, connectionId, apiKey, endpoint, promptTokens, completionTokens, cost, tokens FROM usageHistory",
+                    vec![],
+                ),
+            };
+            let mut stmt = match conn.prepare(sql) {
+                Ok(s) => s,
+                Err(_) => return serde_json::json!({ "totalRequests": 0, "byProvider": {}, "byModel": {}, "recentRequests": [] }),
+            };
+            let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+            let rows = stmt.query_map(param_refs.as_slice(), |r| {
+                Ok((
+                    r.get::<_, Option<String>>(0)?.unwrap_or_default(),
+                    r.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                    r.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                    r.get::<_, Option<String>>(3)?.unwrap_or_default(),
+                    r.get::<_, Option<String>>(4)?.unwrap_or_default(),
+                    r.get::<_, Option<i64>>(5)?.unwrap_or(0),
+                    r.get::<_, Option<i64>>(6)?.unwrap_or(0),
+                    r.get::<_, Option<f64>>(7)?.unwrap_or(0.0),
+                    r.get::<_, Option<String>>(8)?.unwrap_or_default(),
+                ))
+            });
+            let mut total_requests = 0i64;
+            let mut total_prompt = 0i64;
+            let mut total_completion = 0i64;
+            let mut total_cached = 0i64;
+            let mut total_cost = 0.0;
+            // Collect rows first so the stmt borrow ends before we reuse conn.
+            let collected: Vec<(String, String, i64, i64, f64, String)> = if let Ok(rows) = rows {
+                rows.flatten()
+                    .map(|(provider, model, _c, _a, _e, prompt, completion, cost, tokens_json)| {
+                        let cached = field_from_tokens(&tokens_json, "cached_tokens").and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
+                        (provider, model, prompt, completion, cost, format!("{cached}"))
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            // Aggregate into a single day-shaped object, then split out sections.
+            let mut day = new_usage_day();
+            for (provider, model, prompt, completion, cost, cached_s) in &collected {
+                let cached: i64 = cached_s.parse().unwrap_or(0);
+                total_requests += 1;
+                total_prompt += prompt;
+                total_completion += completion;
+                total_cached += cached;
+                total_cost += cost;
+                let vals = serde_json::json!({
+                    "requests": 1, "promptTokens": prompt, "completionTokens": completion,
+                    "cachedTokens": cached, "cost": cost
+                });
+                if !provider.is_empty() {
+                    add_bucket(&mut day, "byProvider", provider, &vals, None);
+                }
+                let mkey = if provider.is_empty() { model.clone() } else { format!("{model}|{provider}") };
+                let meta = serde_json::json!({ "rawModel": model, "provider": provider });
+                add_bucket(&mut day, "byModel", &mkey, &vals, Some(&meta));
+            }
+            let by_provider = day.remove("byProvider").unwrap_or_else(|| Value::Object(Default::default()));
+            let by_model = day.remove("byModel").unwrap_or_else(|| Value::Object(Default::default()));
+
+            // recentRequests (last 20).
+            let mut recent = Vec::new();
+            if let Ok(mut stmt) = conn.prepare("SELECT timestamp, provider, model, promptTokens, completionTokens, status FROM usageHistory ORDER BY id DESC LIMIT 20") {
+                let rows = stmt.query_map([], |r| Ok(serde_json::json!({
+                    "timestamp": r.get::<_, Option<String>>(0)?.unwrap_or_default(),
+                    "provider": r.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                    "model": r.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                    "promptTokens": r.get::<_, Option<i64>>(3)?.unwrap_or(0),
+                    "completionTokens": r.get::<_, Option<i64>>(4)?.unwrap_or(0),
+                    "status": r.get::<_, Option<String>>(5)?.unwrap_or_default(),
+                })));
+                if let Ok(rows) = rows {
+                    recent = rows.flatten().collect();
+                }
+            }
+
+            serde_json::json!({
+                "totalRequests": total_requests,
+                "totalPromptTokens": total_prompt,
+                "totalCompletionTokens": total_completion,
+                "totalCachedTokens": total_cached,
+                "totalCost": total_cost,
+                "byProvider": by_provider,
+                "byModel": by_model,
+                "byAccount": {},
+                "byApiKey": {},
+                "byEndpoint": {},
+                "recentRequests": recent,
+                "pending": { "byModel": {}, "byAccount": {} },
+                "activeRequests": [],
+                "errorProvider": ""
+            })
+        })
+        .await
+        .unwrap_or_else(|_| serde_json::json!({ "totalRequests": 0 }))
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct Credential {
     pub secret: String,
     pub connection_id: String,
+}
+
+// ============================================================
+// Connection create input (M6)
+// ============================================================
+
+#[derive(Debug, Clone)]
+pub struct CreateConnection {
+    pub provider: String,
+    pub auth_type: String, // "apikey" | "cookie" | "access_token"
+    pub name: String,
+    pub api_key: String,
+    pub priority: Option<i64>,
+    pub is_active: bool,
+    pub test_status: String,
+    pub email: Option<String>,
+    pub provider_specific_data: Option<Value>,
+    pub extra: serde_json::Map<String, Value>,
+}
+
+// ============================================================
+// Usage types + helpers (M7) — port of chat_writes.go / usage.go
+// ============================================================
+
+#[derive(Debug, Clone, Default)]
+pub struct ChatUsage {
+    pub prompt: i64,
+    pub completion: i64,
+    pub total: i64,
+    pub cached: i64,
+    pub reasoning: i64,
+    pub cache_creation: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct ChatUsageEntry {
+    pub timestamp: String,
+    pub provider: String,
+    pub model: String,
+    pub connection_id: String,
+    pub api_key: String,
+    pub endpoint: String,
+    pub status: String,
+    pub cost: f64,
+    pub tokens: ChatUsage,
+}
+
+/// Renumber priorities 1..N for one provider (sorted by priority, then updatedAt
+/// desc), inside an existing transaction. Mirrors connectionsRepo reorderInTx.
+fn reorder_priorities(tx: &rusqlite::Transaction, provider: &str) -> rusqlite::Result<()> {
+    let mut stmt = tx.prepare("SELECT id FROM providerConnections WHERE provider = ?1 ORDER BY priority ASC, updatedAt DESC")?;
+    let ids: Vec<String> = stmt
+        .query_map(rusqlite::params![provider], |r| r.get::<_, String>(0))?
+        .filter_map(Result::ok)
+        .collect();
+    drop(stmt);
+    for (i, id) in ids.iter().enumerate() {
+        tx.execute(
+            "UPDATE providerConnections SET priority = ?1 WHERE id = ?2",
+            rusqlite::params![(i + 1) as i64, id],
+        )?;
+    }
+    Ok(())
+}
+
+/// "" → NULL for COALESCE-friendly SQL params.
+fn nullable(s: &str) -> Option<&str> {
+    if s.is_empty() {
+        None
+    } else {
+        Some(s)
+    }
+}
+
+/// Local-zone date key "YYYY-MM-DD" for the daily rollup (usageDaily.dateKey).
+/// We use the system local date to match Node's getLocalDateKey behavior.
+fn local_date_key(iso_ts: &str) -> String {
+    let secs = parse_rfc3339_secs(iso_ts).unwrap_or_else(|| chrono_now_secs());
+    // Convert UTC secs to local. Node uses local date; we approximate with the
+    // UTC date + local offset. For simplicity (and since usageDaily is an
+    // internal rollup), we use the UTC date key. This keeps totals correct;
+    // day boundaries may differ by the local TZ offset.
+    let (y, m, d, _, _, _) = unix_to_civil(secs.max(0) as u64);
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+fn new_usage_day() -> serde_json::Map<String, Value> {
+    let mut m = serde_json::Map::new();
+    m.insert("requests".into(), Value::Number(0.into()));
+    m.insert("promptTokens".into(), Value::Number(0.into()));
+    m.insert("completionTokens".into(), Value::Number(0.into()));
+    m.insert("cachedTokens".into(), Value::Number(0.into()));
+    m.insert("cost".into(), num_f64(0.0));
+    for k in [
+        "byProvider",
+        "byModel",
+        "byAccount",
+        "byApiKey",
+        "byEndpoint",
+    ] {
+        m.insert(k.into(), Value::Object(Default::default()));
+    }
+    m
+}
+
+/// serde_json Number from f64 (falls back to 0 if NaN/inf).
+fn num_f64(v: f64) -> Value {
+    Value::Number(serde_json::Number::from_f64(v).unwrap_or_else(|| serde_json::Number::from(0)))
+}
+
+/// Aggregate one entry into a daily rollup object (chat_writes.go aggregateChatUsage).
+fn aggregate_chat_usage(day: &mut serde_json::Map<String, Value>, e: &ChatUsageEntry, total: i64) {
+    add_num(day, "requests", 1.0);
+    add_num(day, "promptTokens", e.tokens.prompt as f64);
+    add_num(day, "completionTokens", e.tokens.completion as f64);
+    add_num(day, "cachedTokens", e.tokens.cached as f64);
+    add_num(day, "cost", e.cost);
+    let vals = serde_json::json!({
+        "requests": 1, "promptTokens": e.tokens.prompt, "completionTokens": e.tokens.completion,
+        "cachedTokens": e.tokens.cached, "cost": e.cost
+    });
+    if !e.provider.is_empty() {
+        add_bucket(day, "byProvider", &e.provider, &vals, None);
+    }
+    let model_key = if e.provider.is_empty() {
+        e.model.clone()
+    } else {
+        format!("{}|{}", e.model, e.provider)
+    };
+    let model_meta = serde_json::json!({ "rawModel": e.model, "provider": e.provider });
+    add_bucket(day, "byModel", &model_key, &vals, Some(&model_meta));
+    if !e.connection_id.is_empty() {
+        let acct_meta = serde_json::json!({ "rawModel": e.model, "provider": e.provider });
+        add_bucket(day, "byAccount", &e.connection_id, &vals, Some(&acct_meta));
+    }
+    let api_key = if e.api_key.is_empty() {
+        "local-no-key".to_string()
+    } else {
+        e.api_key.clone()
+    };
+    let ak_meta = serde_json::json!({ "rawModel": e.model, "provider": e.provider });
+    add_bucket(
+        day,
+        "byApiKey",
+        &format!(
+            "{api_key}|{}|{}",
+            e.model,
+            if e.provider.is_empty() {
+                "unknown"
+            } else {
+                &e.provider
+            }
+        ),
+        &vals,
+        Some(&ak_meta),
+    );
+    let endpoint = if e.endpoint.is_empty() {
+        "Unknown"
+    } else {
+        &e.endpoint
+    };
+    let ep_meta =
+        serde_json::json!({ "endpoint": endpoint, "rawModel": e.model, "provider": e.provider });
+    add_bucket(
+        day,
+        "byEndpoint",
+        &format!(
+            "{endpoint}|{}|{}",
+            e.model,
+            if e.provider.is_empty() {
+                "unknown"
+            } else {
+                &e.provider
+            }
+        ),
+        &vals,
+        Some(&ep_meta),
+    );
+    let _ = total;
+}
+
+fn add_num(m: &mut serde_json::Map<String, Value>, key: &str, delta: f64) {
+    let cur = m.get(key).and_then(|v| v.as_f64()).unwrap_or(0.0);
+    m.insert(key.into(), num_f64(cur + delta));
+}
+
+fn add_bucket(
+    day: &mut serde_json::Map<String, Value>,
+    section: &str,
+    key: &str,
+    vals: &Value,
+    meta: Option<&Value>,
+) {
+    let section_obj = day
+        .entry(section.to_string())
+        .or_insert_with(|| Value::Object(Default::default()));
+    let obj = section_obj
+        .as_object_mut()
+        .expect("usage day section is object");
+    let bucket = obj
+        .entry(key.to_string())
+        .or_insert_with(|| Value::Object(Default::default()));
+    let b = bucket.as_object_mut().expect("bucket is object");
+    for field in [
+        "requests",
+        "promptTokens",
+        "completionTokens",
+        "cachedTokens",
+        "cost",
+    ] {
+        let delta = vals.get(field).and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let cur = b.get(field).and_then(|v| v.as_f64()).unwrap_or(0.0);
+        b.insert(field.into(), num_f64(cur + delta));
+    }
+    if let Some(meta_obj) = meta.and_then(|v| v.as_object()) {
+        for (k, v) in meta_obj {
+            b.insert(k.clone(), v.clone());
+        }
+    }
+}
+
+/// Extract a numeric field from a tokens JSON string (fallback for NULL columns).
+fn field_from_tokens(tokens_json: &str, key: &str) -> Option<String> {
+    let v: Value = serde_json::from_str(tokens_json).ok()?;
+    let n = v.get(key).and_then(|v| v.as_f64())?;
+    Some((n as i64).to_string())
+}
+
+/// Format a usage log timestamp as "DD-MM-YYYY HH:mm:ss" (local-ish).
+fn format_log_date(iso: &str) -> String {
+    let secs = match parse_rfc3339_secs(iso) {
+        Some(s) => s,
+        None => return iso.to_string(),
+    };
+    let (y, mo, d, h, mi, s) = unix_to_civil(secs.max(0) as u64);
+    format!("{d:02}-{mo:02}-{y:04} {h:02}:{mi:02}:{s:02}")
+}
+
+/// Unix secs → ISO 8601 UTC "YYYY-MM-DDTHH:MM:SS.000Z".
+fn iso_from_secs(secs: i64) -> String {
+    let (y, mo, d, h, mi, s) = unix_to_civil(secs.max(0) as u64);
+    format!("{y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:{s:02}.000Z")
 }
 
 /// A connection row is model-locked when it carries a `modelLock_<model>` or
@@ -438,11 +1305,20 @@ fn parse_rfc3339_secs(s: &str) -> Option<i64> {
     // YYYY-MM-DDTHH:MM:SS[.fff][Z|+HH:MM|-HH:MM]
     let (date, rest) = s.split_once('T')?;
     let d: Vec<u64> = date.split('-').filter_map(|x| x.parse().ok()).collect();
-    if d.len() != 3 { return None; }
+    if d.len() != 3 {
+        return None;
+    }
     // time portion up to an optional offset
-    let (timepart, offset) = rest.split_once(|c: char| c == 'Z' || c == '+' || c == '-').unwrap_or((rest, ""));
-    let t: Vec<u64> = timepart.split(':').filter_map(|x| x.parse().ok()).collect();
-    if t.len() < 3 { return None; }
+    let (timepart, offset) = rest
+        .split_once(|c: char| c == 'Z' || c == '+' || c == '-')
+        .unwrap_or((rest, ""));
+    let t: Vec<u64> = timepart
+        .split(':')
+        .filter_map(|x| x.split('.').next()?.parse().ok())
+        .collect();
+    if t.len() < 3 {
+        return None;
+    }
     let (yy, mm, dd) = (d[0] as i64, d[1] as i64, d[2] as i64);
     let (hh, mi, ss) = (t[0] as i64, t[1] as i64, t[2] as i64);
     // Days since epoch via civil-from-days (Hinnant's algorithm).
@@ -456,7 +1332,10 @@ fn parse_rfc3339_secs(s: &str) -> Option<i64> {
     // Apply offset (Z or +HH:MM / -HH:MM): convert to UTC.
     if !offset.is_empty() {
         let sign = if s.contains('+') { 1 } else { -1 };
-        let parts: Vec<&str> = offset.trim_start_matches(|c: char| c == '+' || c == '-').split(':').collect();
+        let parts: Vec<&str> = offset
+            .trim_start_matches(|c: char| c == '+' || c == '-')
+            .split(':')
+            .collect();
         if parts.len() >= 2 {
             if let (Ok(h), Ok(m)) = (parts[0].parse::<i64>(), parts[1].parse::<i64>()) {
                 secs -= sign * (h * 3600 + m * 60);
@@ -506,7 +1385,10 @@ fn default_settings() -> serde_json::Map<String, Value> {
     set("outboundProxyEnabled", Value::Bool(false));
     set("outboundProxyUrl", Value::String(String::new()));
     set("outboundNoProxy", Value::String(String::new()));
-    set("mitmRouterBaseUrl", Value::String("http://localhost:20128".into()));
+    set(
+        "mitmRouterBaseUrl",
+        Value::String("http://localhost:20128".into()),
+    );
     set("dnsToolEnabled", Value::Object(Default::default()));
     set("rtkEnabled", Value::Bool(true));
     set("headroomEnabled", Value::Bool(false));
@@ -535,7 +1417,10 @@ fn merge_with_defaults(raw: &Value) -> Value {
     for (k, def) in default_settings() {
         if merged.get(&k).map(|v| v.is_null()).unwrap_or(true) {
             if k == "outboundProxyEnabled" {
-                let url = merged.get("outboundProxyUrl").and_then(|v| v.as_str()).unwrap_or("");
+                let url = merged
+                    .get("outboundProxyUrl")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 merged.insert(k, Value::Bool(!url.trim().is_empty()));
             } else {
                 merged.insert(k, def);
@@ -551,10 +1436,23 @@ fn redact_settings(merged: &Value) -> Value {
     if let Some(obj) = out.as_object_mut() {
         obj.remove("password");
         let oidc_secret = obj.remove("oidcClientSecret").unwrap_or(Value::Null);
-        let oidc_issuer = obj.get("oidcIssuerUrl").and_then(|v| v.as_str()).unwrap_or("");
-        let oidc_client = obj.get("oidcClientId").and_then(|v| v.as_str()).unwrap_or("");
+        let oidc_issuer = obj
+            .get("oidcIssuerUrl")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let oidc_client = obj
+            .get("oidcClientId")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         let has_password = merged.get("password").and_then(|v| v.as_str()).is_some();
-        obj.insert("oidcConfigured".into(), Value::Bool(!oidc_issuer.is_empty() && !oidc_client.is_empty() && oidc_secret.as_str().is_some()));
+        obj.insert(
+            "oidcConfigured".into(),
+            Value::Bool(
+                !oidc_issuer.is_empty()
+                    && !oidc_client.is_empty()
+                    && oidc_secret.as_str().is_some(),
+            ),
+        );
         obj.insert("hasPassword".into(), Value::Bool(has_password));
     }
     out
@@ -576,7 +1474,9 @@ fn generate_api_key_string(machine_id: &str) -> String {
     use rand::Rng;
     const CHARS: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
     let mut rng = rand::thread_rng();
-    let key_id: String = (0..6).map(|_| CHARS[rng.gen_range(0..CHARS.len())] as char).collect();
+    let key_id: String = (0..6)
+        .map(|_| CHARS[rng.gen_range(0..CHARS.len())] as char)
+        .collect();
     let crc = crc8(machine_id, &key_id);
     format!("sk-{machine_id}-{key_id}-{crc}")
 }
@@ -608,7 +1508,7 @@ fn now_iso8601() -> String {
 }
 
 /// Unix seconds → (YYYY, MM, DD, HH, MM, SS) in UTC (Hinnant civil_from_days).
-fn unix_to_civil(mut secs: u64) -> (i64, u32, u32, u32, u32, u32) {
+pub fn unix_to_civil(mut secs: u64) -> (i64, u32, u32, u32, u32, u32) {
     let day = (secs / 86400) as i64;
     secs %= 86400;
     let h = (secs / 3600) as u32;
@@ -625,4 +1525,82 @@ fn unix_to_civil(mut secs: u64) -> (i64, u32, u32, u32, u32, u32) {
     let d = (doy - (153 * mp + 2) / 5 + 1) as u32; // [1, 31]
     let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32; // [1, 12]
     (if m <= 2 { y + 1 } else { y }, m, d, h, mi, s)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_db() -> (Db, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!("orouter-rust-test-{}", uuid::Uuid::new_v4()));
+        let path = dir.join("db").join("data.sqlite");
+        (Db::open(&path).expect("open fresh DB"), dir)
+    }
+
+    #[test]
+    fn parses_fractional_rfc3339() {
+        assert_eq!(
+            parse_rfc3339_secs("2026-08-08T16:41:12.449Z"),
+            parse_rfc3339_secs("2026-08-08T16:41:12Z")
+        );
+    }
+
+    #[test]
+    fn bootstraps_fresh_schema() {
+        let (db, dir) = temp_db();
+        let path = dir.join("db").join("data.sqlite");
+        let check = Connection::open(&path).expect("reopen DB");
+        let tables: i64 = check
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('settings','apiKeys','providerConnections','usageHistory','usageDaily','_meta')",
+                [],
+                |r| r.get(0),
+            )
+            .expect("count schema tables");
+        let settings: String = check
+            .query_row("SELECT data FROM settings WHERE id=1", [], |r| r.get(0))
+            .expect("seed settings");
+        assert_eq!(tables, 6);
+        assert_eq!(
+            serde_json::from_str::<Value>(&settings).unwrap()["requireApiKey"],
+            true
+        );
+        drop(check);
+        drop(db);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn usage_round_trip() {
+        let (db, dir) = temp_db();
+        db.save_chat_usage(ChatUsageEntry {
+            timestamp: "2026-08-08T16:41:12.449Z".into(),
+            provider: "openrouter".into(),
+            model: "openai/gpt-test".into(),
+            connection_id: "conn-1".into(),
+            api_key: "sk-test".into(),
+            endpoint: "/v1/chat/completions".into(),
+            status: "ok".into(),
+            cost: 0.0,
+            tokens: ChatUsage {
+                prompt: 12,
+                completion: 4,
+                total: 16,
+                cached: 2,
+                ..Default::default()
+            },
+        })
+        .await
+        .expect("save usage");
+
+        let stats = db.usage_stats("all").await;
+        assert_eq!(stats["totalRequests"], 1);
+        assert_eq!(stats["totalPromptTokens"], 12);
+        assert_eq!(stats["totalCompletionTokens"], 4);
+        assert_eq!(stats["totalCachedTokens"], 2);
+        assert_eq!(db.recent_logs(10).await.len(), 1);
+
+        drop(db);
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }

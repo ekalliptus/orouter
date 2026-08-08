@@ -39,8 +39,10 @@ const FAIL_WINDOW_MS: u64 = 60 * 60 * 1000; // 1h since last fail → auto reset
 // ============================================================
 
 static JWT_SECRET_STRING: Lazy<String> = Lazy::new(load_jwt_secret);
-static JWT_ENCODING: Lazy<EncodingKey> = Lazy::new(|| EncodingKey::from_secret(JWT_SECRET_STRING.as_bytes()));
-static JWT_DECODING: Lazy<DecodingKey> = Lazy::new(|| DecodingKey::from_secret(JWT_SECRET_STRING.as_bytes()));
+static JWT_ENCODING: Lazy<EncodingKey> =
+    Lazy::new(|| EncodingKey::from_secret(JWT_SECRET_STRING.as_bytes()));
+static JWT_DECODING: Lazy<DecodingKey> =
+    Lazy::new(|| DecodingKey::from_secret(JWT_SECRET_STRING.as_bytes()));
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Claims {
@@ -134,7 +136,11 @@ pub fn machine_id() -> String {
 /// Issue a 24h HS256 JWT for an authenticated dashboard session.
 pub fn create_token() -> Result<String, jsonwebtoken::errors::Error> {
     let now = unix_secs();
-    let claims = Claims { authenticated: true, exp: (now + 24 * 3600) as usize, iat: now as usize };
+    let claims = Claims {
+        authenticated: true,
+        exp: (now + 24 * 3600) as usize,
+        iat: now as usize,
+    };
     encode(&Header::default(), &claims, &JWT_ENCODING)
 }
 
@@ -149,7 +155,10 @@ fn use_secure_cookie(headers: &HeaderMap) -> bool {
     if std::env::var("AUTH_COOKIE_SECURE").as_deref() == Ok("true") {
         return true;
     }
-    headers.get("x-forwarded-proto").and_then(|v| v.to_str().ok()) == Some("https")
+    headers
+        .get("x-forwarded-proto")
+        .and_then(|v| v.to_str().ok())
+        == Some("https")
 }
 
 /// Build the Set-Cookie header value for the auth token (or deletion on logout).
@@ -178,7 +187,11 @@ struct Limiter {
     map: std::collections::HashMap<String, LimiterEntry>,
 }
 
-static LIMITER: Lazy<Mutex<Limiter>> = Lazy::new(|| Mutex::new(Limiter { map: Default::default() }));
+static LIMITER: Lazy<Mutex<Limiter>> = Lazy::new(|| {
+    Mutex::new(Limiter {
+        map: Default::default(),
+    })
+});
 
 fn unix_secs() -> u64 {
     std::time::SystemTime::now()
@@ -224,10 +237,16 @@ fn check_lock(ip: &str) -> LockState {
     if let Some(until) = entry.lock_until {
         if now < until {
             let remaining = until.duration_since(now);
-            return LockState { locked: true, retry_after: remaining.as_secs() + 1 };
+            return LockState {
+                locked: true,
+                retry_after: remaining.as_secs() + 1,
+            };
         }
     }
-    LockState { locked: false, retry_after: 0 }
+    LockState {
+        locked: false,
+        retry_after: 0,
+    }
 }
 
 /// Record a failure: increment fails, escalate lockout when threshold hit.
@@ -239,7 +258,8 @@ fn record_fail(ip: &str) -> u32 {
     entry.last_fail_at = Some(Instant::now());
     let remaining = MAX_FAILS_BEFORE_LOCK.saturating_sub(entry.fails);
     if entry.fails >= MAX_FAILS_BEFORE_LOCK {
-        let step_ms = LOCK_STEPS_MS[std::cmp::min(entry.lock_level as usize, LOCK_STEPS_MS.len() - 1)];
+        let step_ms =
+            LOCK_STEPS_MS[std::cmp::min(entry.lock_level as usize, LOCK_STEPS_MS.len() - 1)];
         entry.lock_until = Some(Instant::now() + Duration::from_millis(step_ms));
         entry.lock_level += 1;
         entry.fails = 0; // reset so the next window counts fresh
@@ -271,7 +291,10 @@ pub async fn login(
     if lock.locked {
         return error_json(
             StatusCode::TOO_MANY_REQUESTS,
-            &format!("Too many failed attempts. Try again in {}s. {RESET_HINT}", lock.retry_after),
+            &format!(
+                "Too many failed attempts. Try again in {}s. {RESET_HINT}",
+                lock.retry_after
+            ),
             json!({ "retryAfter": lock.retry_after, "resetHint": RESET_HINT }),
         );
     }
@@ -280,22 +303,42 @@ pub async fn login(
     let settings = state.db.get_settings_full().await;
 
     // OIDC mode disables password login.
-    let auth_mode = settings.get("authMode").and_then(|v| v.as_str()).unwrap_or("password");
+    let auth_mode = settings
+        .get("authMode")
+        .and_then(|v| v.as_str())
+        .unwrap_or("password");
     if auth_mode == "oidc" {
-        let issuer = settings.get("oidcIssuerUrl").and_then(|v| v.as_str()).unwrap_or("");
-        let client = settings.get("oidcClientId").and_then(|v| v.as_str()).unwrap_or("");
-        let secret = settings.get("oidcClientSecret").and_then(|v| v.as_str()).unwrap_or("");
+        let issuer = settings
+            .get("oidcIssuerUrl")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let client = settings
+            .get("oidcClientId")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let secret = settings
+            .get("oidcClientSecret")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         if !issuer.is_empty() && !client.is_empty() && !secret.is_empty() {
-            return error_json(StatusCode::FORBIDDEN, "Password login is disabled. Use OIDC sign in.", json!({}));
+            return error_json(
+                StatusCode::FORBIDDEN,
+                "Password login is disabled. Use OIDC sign in.",
+                json!({}),
+            );
         }
     }
 
-    let stored_hash = settings.get("password").and_then(|v| v.as_str()).unwrap_or("");
+    let stored_hash = settings
+        .get("password")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     let is_valid = if !stored_hash.is_empty() {
         bcrypt::verify(password, stored_hash).unwrap_or(false)
     } else {
         // No stored hash: fall back to INITIAL_PASSWORD env or default "123456".
-        let initial = std::env::var("INITIAL_PASSWORD").unwrap_or_else(|_| DEFAULT_PASSWORD.to_string());
+        let initial =
+            std::env::var("INITIAL_PASSWORD").unwrap_or_else(|_| DEFAULT_PASSWORD.to_string());
         password == initial
     };
 
@@ -305,22 +348,24 @@ pub async fn login(
             Ok(t) => t,
             Err(e) => {
                 warn!("jwt sign failed: {e}");
-                return error_json(StatusCode::INTERNAL_SERVER_ERROR, "token sign failed", json!({}));
+                return error_json(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "token sign failed",
+                    json!({}),
+                );
             }
         };
         let secure = use_secure_cookie(&headers);
         let is_local = ip == "local";
         // Default password still in use on a remote client → require a change.
-        let must_change_password = stored_hash.is_empty()
-            && std::env::var("INITIAL_PASSWORD").is_err()
-            && !is_local;
+        let must_change_password =
+            stored_hash.is_empty() && std::env::var("INITIAL_PASSWORD").is_err() && !is_local;
         let body = json!({ "success": true, "mustChangePassword": must_change_password });
         let mut resp = (StatusCode::OK, Json(body)).into_response();
-        resp.headers_mut().insert("cache-control", "no-store".parse().unwrap());
-        resp.headers_mut().insert(
-            "set-cookie",
-            set_cookie(&token, secure).parse().unwrap(),
-        );
+        resp.headers_mut()
+            .insert("cache-control", "no-store".parse().unwrap());
+        resp.headers_mut()
+            .insert("set-cookie", set_cookie(&token, secure).parse().unwrap());
         return resp;
     }
 
@@ -329,7 +374,10 @@ pub async fn login(
     if after.locked {
         return error_json(
             StatusCode::TOO_MANY_REQUESTS,
-            &format!("Too many failed attempts. Try again in {}s. {RESET_HINT}", after.retry_after),
+            &format!(
+                "Too many failed attempts. Try again in {}s. {RESET_HINT}",
+                after.retry_after
+            ),
             json!({ "retryAfter": after.retry_after, "resetHint": RESET_HINT }),
         );
     }
@@ -344,11 +392,10 @@ pub async fn login(
 pub async fn logout(headers: HeaderMap) -> Response {
     let secure = use_secure_cookie(&headers);
     let mut resp = (StatusCode::OK, Json(json!({ "success": true }))).into_response();
-    resp.headers_mut().insert("cache-control", "no-store".parse().unwrap());
-    resp.headers_mut().insert(
-        "set-cookie",
-        set_cookie("", secure).parse().unwrap(),
-    );
+    resp.headers_mut()
+        .insert("cache-control", "no-store".parse().unwrap());
+    resp.headers_mut()
+        .insert("set-cookie", set_cookie("", secure).parse().unwrap());
     resp
 }
 
@@ -360,7 +407,10 @@ pub async fn status(headers: HeaderMap) -> Response {
 
 /// Middleware helper: extract + verify the auth_token cookie from a request.
 pub fn extract_and_verify(headers: &HeaderMap) -> bool {
-    let cookie = headers.get("cookie").and_then(|v| v.to_str().ok()).unwrap_or("");
+    let cookie = headers
+        .get("cookie")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
     for part in cookie.split(';') {
         let part = part.trim();
         if let Some(rest) = part.strip_prefix(&format!("{COOKIE_NAME}=")) {
