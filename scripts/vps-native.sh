@@ -180,7 +180,10 @@ switch_current() {
 }
 
 wait_for_health() {
-  local url="http://127.0.0.1:$RUST_PORT/health"
+  local port
+  port="$(sudo grep -E '^RUST_PORT=' "$ENV_FILE" 2>/dev/null | cut -d= -f2 || true)"
+  port="${port:-$RUST_PORT}"
+  local url="http://127.0.0.1:$port/health"
   for _ in $(seq 1 30); do
     if curl -fsS --max-time 2 "$url" >/dev/null; then
       return 0
@@ -255,10 +258,13 @@ rollback() {
 }
 
 status() {
+  local port
+  port="$(sudo grep -E '^RUST_PORT=' "$ENV_FILE" 2>/dev/null | cut -d= -f2 || true)"
+  port="${port:-$RUST_PORT}"
   sudo systemctl --no-pager --full status "$SERVICE" || true
   printf '\nCurrent release: %s\n' "$(readlink -f "$CURRENT_LINK" 2>/dev/null || echo none)"
   printf 'Health: '
-  curl -fsS --max-time 2 "http://127.0.0.1:$RUST_PORT/health" || printf 'unavailable'
+  curl -fsS --max-time 2 "http://127.0.0.1:$port/health" || printf 'unavailable'
   printf '\n'
 }
 
