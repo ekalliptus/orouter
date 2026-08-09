@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useProviderStore, type ProviderConnection } from "@/store/providerStore";
 import { useNotificationStore } from "@/store/notificationStore";
 import { Button, Badge, Card } from "@/components/ui";
+import ProviderIcon from "@/components/ProviderIcon";
 
 const PROVIDER_CATEGORIES: Record<string, string[]> = {
   "API Key Providers": [
@@ -206,11 +207,14 @@ export default function ProvidersPage() {
                     return (
                       <Card key={connId}>
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "0.5rem" }}>
-                          <div>
-                            <strong style={{ fontSize: "1.25rem", display: "block" }}>{p.name ?? p.provider}</strong>
-                            <span style={{ fontFamily: "var(--font-body)", color: "var(--color-text-muted)", fontSize: "0.9rem" }}>
-                              {p.provider} · {p.authType}
-                            </span>
+                          <div style={{ display: "flex", gap: "0.75rem", alignItems: "center" }}>
+                            <ProviderIcon providerId={p.provider} size={36} />
+                            <div>
+                              <strong style={{ fontSize: "1.25rem", display: "block" }}>{p.name ?? p.provider}</strong>
+                              <span style={{ fontFamily: "var(--font-body)", color: "var(--color-text-muted)", fontSize: "0.9rem" }}>
+                                {p.provider} · {p.authType}
+                              </span>
+                            </div>
                           </div>
                           <Badge variant={statusVariant} size="sm" dot>
                             {typeof p.testStatus === "string" ? p.testStatus : "unknown"}
