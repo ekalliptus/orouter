@@ -448,7 +448,12 @@ impl Db {
         .unwrap_or_default()
     }
 
-    pub async fn create_combo(&self, name: &str, kind: Option<&str>, models: Value) -> anyhow::Result<serde_json::Value> {
+    pub async fn create_combo(
+        &self,
+        name: &str,
+        kind: Option<&str>,
+        models: Value,
+    ) -> anyhow::Result<serde_json::Value> {
         anyhow::ensure!(!name.is_empty(), "Name is required");
         let id = uuid::Uuid::new_v4().to_string();
         let now = now_iso8601();
@@ -484,7 +489,8 @@ impl Db {
         let id = id.to_string();
         tokio::task::spawn_blocking(move || {
             let conn = conn.blocking_lock();
-            let affected = conn.execute("DELETE FROM combos WHERE id = ?1", rusqlite::params![id])?;
+            let affected =
+                conn.execute("DELETE FROM combos WHERE id = ?1", rusqlite::params![id])?;
             Ok::<_, rusqlite::Error>(affected > 0)
         })
         .await

@@ -314,11 +314,12 @@ pub async fn combos_get(State(state): State<AppState>) -> impl IntoResponse {
     (StatusCode::OK, Json(json!({ "combos": combos })))
 }
 
-pub async fn combos_post(
-    State(state): State<AppState>,
-    Json(body): Json<Value>,
-) -> Response {
-    let name = body.get("name").and_then(|v| v.as_str()).unwrap_or("").trim();
+pub async fn combos_post(State(state): State<AppState>, Json(body): Json<Value>) -> Response {
+    let name = body
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim();
     if name.is_empty() {
         return error_response(StatusCode::BAD_REQUEST, "Name is required");
     }
@@ -331,10 +332,7 @@ pub async fn combos_post(
     }
 }
 
-pub async fn combos_delete(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Response {
+pub async fn combos_delete(State(state): State<AppState>, Path(id): Path<String>) -> Response {
     if state.db.delete_combo(&id).await {
         (StatusCode::OK, Json(json!({ "success": true }))).into_response()
     } else {
