@@ -1,7 +1,3 @@
-// Shell for authenticated pages: Sidebar + Header + content outlet + Toasts.
-// Mirrors the old app's DashboardLayout.js role (Sidebar/Header/toast container
-// wrapping the route group), but in react-router an <Outlet/> fills the page
-// slot instead of Next.js children.
 import { Outlet } from "react-router";
 import Sidebar from "./Sidebar";
 import Header from "./Header";
@@ -9,11 +5,11 @@ import Toasts from "./Toasts";
 
 export default function DashboardLayout() {
   return (
-    <div style={{ display: "flex", minHeight: "100vh" }}>
+    <div className="flex min-h-screen bg-bg text-text-main transition-colors duration-300">
       <Sidebar />
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+      <div className="flex flex-1 flex-col min-w-0">
         <Header />
-        <main style={{ flex: 1, padding: "1.5rem" }}>
+        <main className="flex-1 p-6 overflow-y-auto">
           <Outlet />
         </main>
       </div>
