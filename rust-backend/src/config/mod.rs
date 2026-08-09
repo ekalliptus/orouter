@@ -18,6 +18,8 @@ pub struct Config {
     pub port: u16,
     /// Shared data dir (matches Node `dataDir.js` + Go config). Default ~/.9router.
     pub data_dir: PathBuf,
+    /// Vite production output served by the Rust process.
+    pub static_dir: PathBuf,
     /// Outbound request body cap (proxied + native), in bytes.
     pub body_max_bytes: usize,
     pub read_timeout: Duration,
@@ -25,9 +27,6 @@ pub struct Config {
     pub shutdown_timeout: Duration,
     /// tracing filter (e.g. "info,orouter_backend=debug").
     pub log_level: String,
-    /// HS256 secret for the dashboard JWT cookie. Required once M3 login lands;
-    /// v1 reads it but does not hard-fail if unset (proxy works without it).
-    pub jwt_secret: String,
 }
 
 impl Config {
@@ -53,12 +52,12 @@ impl Default for Config {
             host: DEFAULT_HOST.to_string(),
             port: DEFAULT_PORT,
             data_dir: default_data_dir(),
+            static_dir: default_static_dir(),
             body_max_bytes: DEFAULT_BODY_MAX_MB * 1024 * 1024,
             read_timeout: Duration::from_secs(30),
             write_timeout: Duration::from_secs(5 * 60),
             shutdown_timeout: Duration::from_secs(10),
             log_level: "info".to_string(),
-            jwt_secret: String::new(),
         }
     }
 }
@@ -90,6 +89,11 @@ pub fn load() -> Config {
             cfg.data_dir = PathBuf::from(v);
         }
     }
+    if let Ok(v) = std::env::var("STATIC_DIR") {
+        if !v.is_empty() {
+            cfg.static_dir = PathBuf::from(v);
+        }
+    }
     if let Ok(v) = std::env::var("RUST_BODY_MAX_MB") {
         if let Ok(mb) = v.parse::<usize>() {
             cfg.body_max_bytes = mb * 1024 * 1024;
@@ -113,10 +117,6 @@ pub fn load() -> Config {
     if let Ok(v) = std::env::var("RUST_LOG_LEVEL").or_else(|_| std::env::var("GO_LOG_LEVEL")) {
         cfg.log_level = v;
     }
-    if let Ok(v) = std::env::var("JWT_SECRET") {
-        cfg.jwt_secret = v;
-    }
-
     cfg
 }
 
@@ -127,6 +127,17 @@ fn default_data_dir() -> PathBuf {
         }
     }
     PathBuf::from(".9router")
+}
+
+fn default_static_dir() -> PathBuf {
+    // Running from the repo root is the common local path; running from
+    // rust-backend/ remains supported. Production always sets STATIC_DIR.
+    let root = PathBuf::from("react-web/dist");
+    if root.is_dir() {
+        root
+    } else {
+        PathBuf::from("../react-web/dist")
+    }
 }
 
 /// Minimal human duration parser: supports "30s", "5m", "1h", or bare seconds.

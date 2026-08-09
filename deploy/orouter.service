@@ -1,0 +1,31 @@
+[Unit]
+Description=ORouter native Rust service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=orouter
+Group=orouter
+WorkingDirectory=/opt/orouter/current
+EnvironmentFile=/etc/orouter/orouter.env
+ExecStart=/opt/orouter/current/orouter-backend
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=20
+KillSignal=SIGTERM
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/9router
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=orouter
+
+[Install]
+WantedBy=multi-user.target

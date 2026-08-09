@@ -5,6 +5,7 @@
 pub mod dashboard;
 
 use axum::{http::StatusCode, response::IntoResponse};
+use serde_json::json;
 
 /// GET /health — pure liveness, no DB ping. Mirrors health.go.
 pub async fn health() -> impl IntoResponse {
@@ -23,4 +24,13 @@ pub async fn health() -> impl IntoResponse {
 pub async fn models() -> impl IntoResponse {
     let body = crate::snapshot::openai_model_list();
     (StatusCode::OK, axum::Json(body))
+}
+
+/// JSON fallback for unknown backend paths. Kept separate from the SPA fallback
+/// so typos under /api and /v1 never return index.html.
+pub async fn not_found() -> impl IntoResponse {
+    (
+        StatusCode::NOT_FOUND,
+        axum::Json(json!({ "error": "Not found" })),
+    )
 }

@@ -1,0 +1,11 @@
+# Replace with your real domain, then install as /etc/caddy/Caddyfile.
+orouter.example.com {
+    encode zstd gzip
+
+    reverse_proxy 127.0.0.1:20130 {
+        # Send SSE chunks immediately instead of buffering them.
+        flush_interval -1
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+    }
+}

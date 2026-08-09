@@ -1205,38 +1205,72 @@ Model: cc/claude-opus-4-7
 <details>
 <summary><b>🚀 Deployment</b></summary>
 
-### VPS Deployment
+### VPS Deployment — native Rust + React
+
+The rewrite runs as one lightweight Rust process: Axum API/LLM streaming plus the
+built React dashboard. The supported VPS path is Ubuntu/Debian + systemd; Caddy
+provides HTTPS.
 
 ```bash
-# Clone and install
-git clone https://github.com/decolua/9router.git
-cd 9router
-npm install
-npm run build
-
-# Configure
-export JWT_SECRET="your-secure-secret-change-this"
-export INITIAL_PASSWORD="your-password"
-export DATA_DIR="/var/lib/9router"
-export PORT="20128"
-export HOSTNAME="0.0.0.0"
-export NODE_ENV="production"
-export NEXT_PUBLIC_BASE_URL="http://localhost:20128"
-export NEXT_PUBLIC_CLOUD_URL="https://9router.com"
-export API_KEY_SECRET="endpoint-proxy-api-key-secret"
-export MACHINE_ID_SALT="endpoint-proxy-salt"
-
-# Start
-npm run start
-
-# Or use PM2
-npm install -g pm2
-pm2 start npm --name 9router -- start
-pm2 save
-pm2 startup
+# First install (run as a normal sudo-capable deploy user, not root)
+git clone https://github.com/ekalliptus/orouter.git
+cd orouter
+./scripts/vps-native.sh bootstrap
+./scripts/vps-native.sh deploy
 ```
 
-### Docker
+`bootstrap` installs build prerequisites, Rust (rustup), and Bun; creates the
+`orouter` service user, `/var/lib/9router`, `/etc/orouter/orouter.env`, and the
+systemd unit. It prints the generated dashboard password once.
+
+Configure HTTPS:
+
+```bash
+sudo apt-get install -y caddy
+sudo cp deploy/Caddyfile.example /etc/caddy/Caddyfile
+sudo editor /etc/caddy/Caddyfile       # replace orouter.example.com
+sudo caddy validate --config /etc/caddy/Caddyfile
+sudo systemctl reload caddy
+```
+
+Normal source update:
+
+```bash
+git pull --ff-only origin main
+./scripts/vps-native.sh deploy
+```
+
+Rust is checked on every deploy but not changed automatically. Update the stable
+Rust toolchain explicitly:
+
+```bash
+./scripts/vps-native.sh rust-check
+./scripts/vps-native.sh rust-update
+# or update immediately before a deployment
+UPDATE_RUST=1 ./scripts/vps-native.sh deploy
+```
+
+Operations:
+
+```bash
+./scripts/vps-native.sh status
+./scripts/vps-native.sh logs
+./scripts/vps-native.sh rollback
+```
+
+Deployments build/test before restart, back up SQLite, install a SHA-named
+release under `/opt/orouter/releases`, atomically switch `/opt/orouter/current`,
+health-check `/health`, and roll back automatically on failure. Runtime state is
+persisted under `/var/lib/9router`.
+
+For direct HTTP testing without Caddy, set `AUTH_COOKIE_SECURE=false` in
+`/etc/orouter/orouter.env`; production HTTPS should keep it `true`.
+
+### Docker (legacy Next.js/Go image)
+
+The current root Dockerfile still packages the legacy Next.js runtime. Use the
+native VPS path above for the Rust + React rewrite until the Docker image is
+migrated.
 
 Published images (multi-platform `linux/amd64` + `linux/arm64`):
 

@@ -18,6 +18,8 @@
     "cli:publish": "bun run --cwd cli publish:cli",
     "prod:local": "bash scripts/prod-local.sh",
     "doctor:macos": "bash scripts/doctor-macos.sh",
+    "build:rewrite": "cargo build --manifest-path rust-backend/Cargo.toml --release --locked && bun run --cwd react-web build",
+    "test:rewrite": "cargo fmt --manifest-path rust-backend/Cargo.toml -- --check && cargo test --manifest-path rust-backend/Cargo.toml --locked && (cd react-web && bunx tsc -b)",
     "build:icons": "python3 scripts/build-material-symbols-subset.py"
   },
   "dependencies": {

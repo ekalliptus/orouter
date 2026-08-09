@@ -21,11 +21,16 @@ use std::time::Duration;
 
 use axum::{
     middleware,
-    routing::{get, post},
+    routing::{any, get, post},
     Router,
 };
 use proxy::AppState;
-use tower_http::{cors::CorsLayer, limit::RequestBodyLimitLayer, trace::TraceLayer};
+use tower_http::{
+    cors::CorsLayer,
+    limit::RequestBodyLimitLayer,
+    services::{ServeDir, ServeFile},
+    trace::TraceLayer,
+};
 use tracing::info;
 
 #[tokio::main]
@@ -45,6 +50,7 @@ async fn main() {
         host = %cfg.host,
         data_dir = %cfg.data_dir.display(),
         db_path = %cfg.db_path().display(),
+        static_dir = %cfg.static_dir.display(),
         "orouter-backend starting"
     );
 
@@ -66,7 +72,8 @@ async fn main() {
     let client = reqwest::Client::builder()
         .pool_idle_timeout(Duration::from_secs(90))
         .tcp_keepalive(Duration::from_secs(60))
-        .timeout(Duration::from_secs(600)) // generous; SSE streams long
+        .connect_timeout(cfg.read_timeout)
+        .timeout(cfg.write_timeout)
         .build()
         .expect("reqwest client build");
 
@@ -113,12 +120,28 @@ async fn main() {
         .layer(middleware::from_fn(auth::middleware::require_auth))
         .with_state(state.clone());
 
+    // Reserve backend prefixes before the SPA fallback. Unknown API paths must
+    // return JSON 404 rather than index.html.
+    let backend_not_found = Router::new()
+        .route("/api", any(api::not_found))
+        .route("/api/*path", any(api::not_found))
+        .route("/v1", any(api::not_found))
+        .route("/v1/*path", any(api::not_found));
+
+    // Serve the Vite output from the same Rust process. Missing frontend routes
+    // fall back to index.html for React Router; static assets remain cacheable by
+    // the reverse proxy.
+    let static_files =
+        ServeDir::new(&cfg.static_dir).fallback(ServeFile::new(cfg.static_dir.join("index.html")));
+
     let app = Router::new()
         .route("/health", get(api::health))
         .route("/v1/models", get(api::models))
         .route("/v1/chat/completions", post(proxy::chat_completions))
         .merge(auth_routes)
         .merge(dashboard_routes)
+        .merge(backend_not_found)
+        .fallback_service(static_files)
         .layer(RequestBodyLimitLayer::new(cfg.body_max_bytes))
         .layer(CorsLayer::very_permissive())
         .layer(TraceLayer::new_for_http())
@@ -130,13 +153,47 @@ async fn main() {
 
     info!("listening on http://{}", cfg.addr());
 
-    let shutdown = async move {
-        let _ = tokio::signal::ctrl_c().await;
-        info!("ctrl-c received, shutting down");
-    };
+    // systemd sends SIGTERM; local terminals send SIGINT. Trigger graceful
+    // Axum shutdown for either, then enforce the configured ceiling so a stuck
+    // SSE client cannot block a deployment indefinitely.
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    let mut server = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .with_graceful_shutdown(async {
+                let _ = shutdown_rx.await;
+            })
+            .await
+    });
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown)
-        .await
-        .expect("server error");
+    tokio::select! {
+        result = &mut server => {
+            result.expect("server task panicked").expect("server error");
+        }
+        signal = shutdown_signal() => {
+            info!(signal, "shutdown requested");
+            let _ = shutdown_tx.send(());
+            if tokio::time::timeout(cfg.shutdown_timeout, &mut server).await.is_err() {
+                tracing::warn!(timeout = ?cfg.shutdown_timeout, "graceful shutdown timed out; aborting");
+                server.abort();
+            }
+        }
+    }
+}
+
+async fn shutdown_signal() -> &'static str {
+    #[cfg(unix)]
+    {
+        let mut terminate =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                .expect("install SIGTERM handler");
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => "SIGINT",
+            _ = terminate.recv() => "SIGTERM",
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+        "SIGINT"
+    }
 }

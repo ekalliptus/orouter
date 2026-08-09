@@ -4,7 +4,10 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "sync:public": "bun scripts/sync-public.mjs",
+    "predev": "bun run sync:public",
     "dev": "vite --port 5173",
+    "prebuild": "bun run sync:public",
     "build": "tsc -b && vite build",
     "preview": "vite preview --port 5173"
   },
