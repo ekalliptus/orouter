@@ -12,7 +12,9 @@ import EndpointPage from "@/pages/EndpointPage";
 import ProvidersPage from "@/pages/ProvidersPage";
 import KeysPage from "@/pages/KeysPage";
 import UsagePage from "@/pages/UsagePage";
-import ComingSoonPage from "@/pages/ComingSoonPage";
+import CombosPage from "@/pages/CombosPage";
+import CLIToolsPage from "@/pages/CLIToolsPage";
+import SettingsPage from "@/pages/SettingsPage";
 
 function LocaleReloader() {
   // Mirrors RuntimeI18nProvider: re-read the locale cookie + retranslate the
@@ -43,9 +45,9 @@ export default function App() {
           <Route path="providers" element={<ProvidersPage />} />
           <Route path="keys" element={<KeysPage />} />
           <Route path="usage" element={<UsagePage />} />
-          <Route path="combos" element={<ComingSoonPage title="Combos" emoji="🧩" />} />
-          <Route path="cli-tools" element={<ComingSoonPage title="CLI Tools" emoji="🛠️" />} />
-          <Route path="profile" element={<ComingSoonPage title="Settings" emoji="⚙️" />} />
+          <Route path="combos" element={<CombosPage />} />
+          <Route path="cli-tools" element={<CLIToolsPage />} />
+          <Route path="profile" element={<SettingsPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>

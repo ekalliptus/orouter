@@ -117,6 +117,15 @@ async fn main() {
         )
         .route("/api/usage/logs", get(api::dashboard::usage_logs))
         .route("/api/usage/stats", get(api::dashboard::usage_stats))
+        .route(
+            "/api/combos",
+            get(api::dashboard::combos_get).post(api::dashboard::combos_post),
+        )
+        .route(
+            "/api/combos/:id",
+            axum::routing::delete(api::dashboard::combos_delete),
+        )
+        .route("/api/cli-tools", get(api::dashboard::cli_tools_get))
         .layer(middleware::from_fn(auth::middleware::require_auth))
         .with_state(state.clone());
 

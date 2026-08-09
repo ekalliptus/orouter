@@ -307,6 +307,54 @@ pub async fn usage_stats(
     (StatusCode::OK, Json(stats))
 }
 
+// ---- /api/combos ---------------------------------------------------------
+
+pub async fn combos_get(State(state): State<AppState>) -> impl IntoResponse {
+    let combos = state.db.list_combos().await;
+    (StatusCode::OK, Json(json!({ "combos": combos })))
+}
+
+pub async fn combos_post(
+    State(state): State<AppState>,
+    Json(body): Json<Value>,
+) -> Response {
+    let name = body.get("name").and_then(|v| v.as_str()).unwrap_or("").trim();
+    if name.is_empty() {
+        return error_response(StatusCode::BAD_REQUEST, "Name is required");
+    }
+    let kind = body.get("kind").and_then(|v| v.as_str());
+    let models = body.get("models").cloned().unwrap_or_else(|| json!([]));
+
+    match state.db.create_combo(name, kind, models).await {
+        Ok(combo) => (StatusCode::CREATED, Json(combo)).into_response(),
+        Err(e) => error_response(StatusCode::BAD_REQUEST, &e.to_string()),
+    }
+}
+
+pub async fn combos_delete(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    if state.db.delete_combo(&id).await {
+        (StatusCode::OK, Json(json!({ "success": true }))).into_response()
+    } else {
+        error_response(StatusCode::NOT_FOUND, "Combo not found")
+    }
+}
+
+// ---- /api/cli-tools ------------------------------------------------------
+
+pub async fn cli_tools_get() -> impl IntoResponse {
+    let tools = json!([
+        { "id": "claude", "name": "Claude Code", "description": "Anthropic CLI agent" },
+        { "id": "cursor", "name": "Cursor / Windsurf", "description": "AI IDE integration" },
+        { "id": "kiro", "name": "Kiro CLI", "description": "Kiro AI agent" },
+        { "id": "antigravity", "name": "Google Antigravity", "description": "Google AI IDE" },
+        { "id": "cowork", "name": "Cowork Tools", "description": "Collaborative CLI suite" }
+    ]);
+    (StatusCode::OK, Json(json!({ "tools": tools })))
+}
+
 use axum::response::Response;
 
 fn error_response(status: StatusCode, message: &str) -> Response {

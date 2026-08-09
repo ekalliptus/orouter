@@ -16,9 +16,9 @@ const NAV: NavItem[] = [
   { to: "/dashboard/keys", label: "API Keys", emoji: "🔑" },
   { to: "/dashboard/providers", label: "Providers", emoji: "🤖" },
   { to: "/dashboard/usage", label: "Usage", emoji: "📊" },
-  { to: "/dashboard/combos", label: "Combos", emoji: "🧩", soon: true },
-  { to: "/dashboard/cli-tools", label: "CLI Tools", emoji: "🛠️", soon: true },
-  { to: "/dashboard/profile", label: "Settings", emoji: "⚙️", soon: true },
+  { to: "/dashboard/combos", label: "Combos", emoji: "🧩" },
+  { to: "/dashboard/cli-tools", label: "CLI Tools", emoji: "🛠️" },
+  { to: "/dashboard/profile", label: "Settings", emoji: "⚙️" },
 ];
 
 export default function Sidebar() {
@@ -67,6 +67,7 @@ export default function Sidebar() {
             <NavLink
               key={item.to}
               to={item.to}
+              end={item.to === "/dashboard"}
               className="kid-tilt"
               style={({ isActive }) => ({
                 display: "flex",

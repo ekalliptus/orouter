@@ -79,6 +79,14 @@ fn ensure_schema(conn: &Connection) -> rusqlite::Result<()> {
           key TEXT PRIMARY KEY,
           value TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS combos (
+          id TEXT PRIMARY KEY,
+          name TEXT UNIQUE NOT NULL,
+          kind TEXT,
+          models TEXT NOT NULL,
+          createdAt TEXT NOT NULL,
+          updatedAt TEXT NOT NULL
+        );
         INSERT INTO settings(id, data)
         VALUES(1, '{"requireLogin":true,"requireApiKey":true}')
         ON CONFLICT(id) DO NOTHING;
@@ -397,6 +405,86 @@ impl Db {
             let conn = conn.blocking_lock();
             let affected =
                 conn.execute("DELETE FROM apiKeys WHERE id = ?1", rusqlite::params![id])?;
+            Ok::<_, rusqlite::Error>(affected > 0)
+        })
+        .await
+        .ok()
+        .and_then(|r| r.ok())
+        .unwrap_or(false)
+    }
+
+    // ============================================================
+    // Combos CRUD
+    // ============================================================
+
+    pub async fn list_combos(&self) -> Vec<serde_json::Value> {
+        let conn = self.inner.clone();
+        tokio::task::spawn_blocking(move || -> Vec<serde_json::Value> {
+            let conn = conn.blocking_lock();
+            let mut stmt = match conn.prepare("SELECT id, name, kind, models, createdAt, updatedAt FROM combos ORDER BY createdAt ASC") {
+                Ok(s) => s,
+                Err(_) => return Vec::new(),
+            };
+            let rows = stmt
+                .query_map([], |r| {
+                    let models_json: String = r.get::<_, String>(3)?;
+                    let models_val: Value = serde_json::from_str(&models_json).unwrap_or_else(|_| serde_json::json!([]));
+                    Ok(serde_json::json!({
+                        "id": r.get::<_, String>(0)?,
+                        "name": r.get::<_, String>(1)?,
+                        "kind": r.get::<_, Option<String>>(2)?,
+                        "models": models_val,
+                        "createdAt": r.get::<_, String>(4)?,
+                        "updatedAt": r.get::<_, String>(5)?,
+                    }))
+                })
+                .ok()
+                .into_iter()
+                .flatten()
+                .filter_map(Result::ok);
+            rows.collect()
+        })
+        .await
+        .unwrap_or_default()
+    }
+
+    pub async fn create_combo(&self, name: &str, kind: Option<&str>, models: Value) -> anyhow::Result<serde_json::Value> {
+        anyhow::ensure!(!name.is_empty(), "Name is required");
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = now_iso8601();
+        let models_json = serde_json::to_string(&models)?;
+
+        let conn = self.inner.clone();
+        let name_c = name.to_string();
+        let kind_c = kind.map(String::from);
+        let id_c = id.clone();
+        let now_c = now.clone();
+        tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+            let conn = conn.blocking_lock();
+            conn.execute(
+                "INSERT INTO combos(id, name, kind, models, createdAt, updatedAt) VALUES(?1, ?2, ?3, ?4, ?5, ?6)",
+                rusqlite::params![id_c, name_c, kind_c, models_json, now_c, now_c],
+            )?;
+            Ok(())
+        })
+        .await??;
+
+        Ok(serde_json::json!({
+            "id": id,
+            "name": name,
+            "kind": kind,
+            "models": models,
+            "createdAt": now,
+            "updatedAt": now,
+        }))
+    }
+
+    pub async fn delete_combo(&self, id: &str) -> bool {
+        let conn = self.inner.clone();
+        let id = id.to_string();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.blocking_lock();
+            let affected = conn.execute("DELETE FROM combos WHERE id = ?1", rusqlite::params![id])?;
             Ok::<_, rusqlite::Error>(affected > 0)
         })
         .await
