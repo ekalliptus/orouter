@@ -5,9 +5,11 @@ import { CLIENT_STORE_TTL_MS } from "@/shared/constants/config";
 
 const useProviderStore = create((set, get) => ({
   providers: [],
+  providerNodes: [],
   loading: false,
   error: null,
   lastFetched: 0,
+  lastFetchedNodes: 0,
 
   setProviders: (providers) => set({ providers, lastFetched: Date.now() }),
 
@@ -47,6 +49,21 @@ const useProviderStore = create((set, get) => ({
       }
     } catch (error) {
       set({ error: "Failed to fetch providers", loading: false });
+    }
+  },
+
+  // Fetch OpenAI/Anthropic-compatible provider nodes (used by Usage + ModelSelect).
+  fetchProviderNodes: async ({ force = false } = {}) => {
+    const { lastFetchedNodes, providerNodes } = get();
+    if (!force && providerNodes && providerNodes.length > 0 && Date.now() - (lastFetchedNodes || 0) < CLIENT_STORE_TTL_MS) return providerNodes;
+    try {
+      const response = await fetch("/api/provider-nodes");
+      const data = await response.json();
+      const nodes = data.nodes || data || [];
+      set({ providerNodes: nodes, lastFetchedNodes: Date.now() });
+      return nodes;
+    } catch (error) {
+      return [];
     }
   },
 }));
