@@ -84,25 +84,30 @@ pub async fn chat_completions(
         }
     }
 
-    let resolved = snapshot::resolve(&model).ok_or_else(|| ChatError {
-        status: StatusCode::NOT_FOUND,
-        message: format!(
-            "Model '{model}' is not available for native proxying (non-OpenAI format, OAuth, combo, …)."
-        ),
-    })?;
+    // Try to resolve natively. If the model isn't a native OpenAI-format
+    // provider (Claude, Gemini, OAuth, combo, etc.), fall through to Node
+    // which can handle it via the open-sse translator.
+    let resolved = match snapshot::resolve(&model) {
+        Some(r) => r,
+        None => {
+            tracing::info!(model = %model, "non-native model, proxying to Node");
+            return proxy_request_to_node(state, headers, body).await;
+        }
+    };
 
-    // Pick ONE credential up front; pass it through to avoid double reads.
-    let cred = state
+    // Pick ONE credential up front. If none found natively (e.g. OAuth-only
+    // connections), fall through to Node which has the full credential picker.
+    let cred = match state
         .db
         .pick_credential(&resolved.provider_id, &model)
         .await
-        .ok_or_else(|| ChatError {
-            status: StatusCode::SERVICE_UNAVAILABLE,
-            message: format!(
-                "No active credential found for provider '{}'",
-                resolved.provider_id
-            ),
-        })?;
+    {
+        Some(c) => c,
+        None => {
+            tracing::info!(provider = %resolved.provider_id, "no native credential, proxying to Node");
+            return proxy_request_to_node(state, headers, body).await;
+        }
+    };
 
     // Overwrite model with the upstream id (Go: out["model"] = upstream).
     if let Some(obj) = payload.as_object_mut() {
@@ -146,6 +151,64 @@ pub async fn chat_completions(
     } else {
         Ok(relay_json_async(upstream, state.clone(), usage_ctx).await)
     }
+}
+
+/// Forward a chat request to the Node upstream (for non-native models like
+/// Claude/Gemini/OAuth/combo). Node's open-sse translator handles format
+/// conversion, OAuth refresh, combo routing, etc.
+async fn proxy_request_to_node(
+    state: AppState,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ChatError> {
+    let node_upstream = &state.node_upstream;
+    if node_upstream.is_empty() {
+        return Err(ChatError {
+            status: StatusCode::NOT_FOUND,
+            message: "Model not available for native proxying and no Node upstream configured."
+                .into(),
+        });
+    }
+
+    let target_url = format!("{node_upstream}/v1/chat/completions");
+    let mut hdrs = HeaderMap::new();
+    for (name, value) in &headers {
+        let name_str = name.as_str();
+        if matches!(
+            name_str,
+            "host" | "content-length" | "connection" | "transfer-encoding"
+        ) {
+            continue;
+        }
+        hdrs.insert(name.clone(), value.clone());
+    }
+    hdrs.insert("content-type", HeaderValue::from_static("application/json"));
+
+    let upstream_req = state.client.post(&target_url).headers(hdrs).body(body);
+    let upstream_resp = upstream_req.send().await.map_err(|e| ChatError {
+        status: StatusCode::BAD_GATEWAY,
+        message: format!("Node upstream error: {e}"),
+    })?;
+
+    let status = upstream_resp.status();
+    let mut resp_headers = HeaderMap::new();
+    for (name, value) in upstream_resp.headers() {
+        if matches!(
+            name.as_str(),
+            "connection" | "transfer-encoding" | "content-length"
+        ) {
+            continue;
+        }
+        resp_headers.insert(name.clone(), value.clone());
+    }
+
+    let stream = upstream_resp
+        .bytes_stream()
+        .map(|chunk| chunk.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e)));
+    let mut resp = Response::new(Body::from_stream(stream));
+    *resp.status_mut() = status;
+    *resp.headers_mut() = resp_headers;
+    Ok(resp)
 }
 
 /// Context threaded into the relays so they can persist usage after the request.
