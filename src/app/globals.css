@@ -1,5 +1,6 @@
 /* source() sets scan base to src/ for both webpack + Turbopack; auto-detection still skips binaries + gitignore */
 @import "tailwindcss" source("../../");
+@import url("https://fonts.googleapis.com/css2?family=Gochi+Hand&family=Patrick+Hand&display=swap");
 
 @custom-variant dark (&:where(.dark, .dark *));
 
@@ -29,25 +30,30 @@
 }
 
 /* ============================================================
-   Neobrutalism palette — flat colors, hard black borders,
-   hard offset shadows (no blur), cream/warm base.
-   Original 9Router palette preserved as commented reference.
+   🖍️ KID DRAWING THEME — 5-year-old crayon edition!
+   Based on neobrutalism (thick black borders, hard offset shadows)
+   but pushed further: hand-drawn font (Gochi Hand), saturated
+   crayon palette, paper texture, wobbly edges.
+   All 9Router features remain 100% intact — only CSS variables change.
    ============================================================ */
 :root {
-  --aurora-coral: #e96f50;
-  --aurora-coral-strong: #ce4f35;
-  --aurora-mint: #4fcf9f;
+  --aurora-coral: #ff6b35;
+  --aurora-coral-strong: #e85420;
+  --aurora-mint: #06d6a0;
   --aurora-grid: color-mix(in srgb, var(--color-text-main) 9%, transparent);
   --glass-bg: var(--color-surface);
   --glass-bg-strong: var(--color-surface);
   --glass-border: #000000;
-  --glass-highlight: color-mix(in srgb, white 10%, transparent);
+  --glass-highlight: color-mix(in srgb, white 12%, transparent);
   --shadow-glass: 8px 8px 0 0 #000000;
 
-  /* Neobrutalism hard offset shadow tokens (no blur, pure offset) */
+  /* Crayon offset shadows — bigger than stock neobrutalism,
+     like a paper cut-out glued slightly off. */
   --nb-border: #000000;
-  --nb-shadow-sm: 3px 3px 0 0 var(--nb-border);
-  --nb-shadow: 4px 4px 0 0 var(--nb-border);
+  --nb-shadow-sm: 4px 4px 0 0 var(--nb-border);
+  --nb-shadow: 6px 6px 0 0 var(--nb-border);
+  --nb-shadow-lg: 9px 9px 0 0 var(--nb-border);
+  --nb-shadow-xl: 12px 12px 0 0 var(--nb-border);
   --nb-shadow-lg: 6px 6px 0 0 var(--nb-border);
   --nb-shadow-xl: 8px 8px 0 0 var(--nb-border);
 
@@ -67,27 +73,29 @@
   --color-primary: var(--color-brand-500);
   --color-primary-hover: var(--color-brand-600);
 
-  /* Neobrutalist accent pops (flat, high-contrast) */
-  --color-accent: #FFD23F;
-  --color-accent-2: #2EC4B6;
+  /* Kid accent pops — saturated primaries like crayons */
+  --color-accent: #FFD23F;      /* sunshine yellow */
+  --color-accent-2: #2EC4B6;    /* crayon teal */
+  --color-accent-3: #FF6B9D;    /* marker pink */
+  --color-accent-4: #4361EE;    /* poster blue */
 
-  /* Surfaces & backgrounds (light) - warm cream, flat */
-  --color-bg: #F4EDE0;
-  --color-bg-alt: #ECE3D2;
+  /* Surfaces (light) — warm construction paper */
+  --color-bg: #FFFDF7;
+  --color-bg-alt: #F7F1E3;
   --color-surface: #FFFFFF;
-  --color-surface-2: #F2EDE2;
-  --color-surface-3: #E5DDCC;
-  --color-sidebar: #F4EDE0;
+  --color-surface-2: #F6EFDF;
+  --color-surface-3: #ECE1C9;
+  --color-sidebar: #FFFDF7;
 
-  /* Borders - solid black, the neobrutalist signature */
+  /* Borders — solid marker black */
   --color-border: #000000;
   --color-border-subtle: #000000;
 
   /* Text */
-  --color-text: #0a0a0a;
-  --color-text-main: #0a0a0a;
-  --color-text-muted: #4a4a4a;
-  --color-text-subtle: #6b6b6b;
+  --color-text: #1a1410;
+  --color-text-main: #1a1410;
+  --color-text-muted: #4a4036;
+  --color-text-subtle: #6b6052;
 
   /* Status - flat, saturated for contrast on cream */
   --color-danger: #E63946;
@@ -190,6 +198,39 @@ select {
 }
 
 /* ============================================================
+   🖍️ Kid Drawing enhancements — paper texture, wobble, tilt.
+   Layered on top of the existing neobrutalism rules below.
+   ============================================================ */
+
+/* SVG filter for wobbly hand-drawn edges. Applied via class. */
+.kid-wobble { filter: url(#crayon-edge); }
+
+/* Random paper-cut tilt for cards. */
+.kid-tilt { transform: rotate(var(--tilt, 0deg)); }
+.kid-tilt-list > *:nth-child(3n+1) { --tilt: -1.2deg; }
+.kid-tilt-list > *:nth-child(3n+2) { --tilt: 0.8deg; }
+.kid-tilt-list > *:nth-child(3n+3) { --tilt: -0.5deg; }
+
+@media (prefers-reduced-motion: reduce) {
+  .kid-wobble { filter: none; }
+  .kid-tilt, .kid-tilt-list > * { transform: none !important; }
+}
+
+/* Paper texture on body — construction paper feel */
+body {
+  background-image:
+    radial-gradient(circle at 12% 18%, color-mix(in srgb, var(--color-accent-3, #FF6B9D) 10%, transparent) 0%, transparent 38%),
+    radial-gradient(circle at 88% 82%, color-mix(in srgb, var(--color-accent-4, #4361EE) 8%, transparent) 0%, transparent 42%);
+  background-attachment: fixed;
+}
+
+/* Selection — highlighter swipe */
+::selection {
+  background-color: color-mix(in srgb, var(--color-accent) 50%, transparent) !important;
+  color: var(--color-text-main) !important;
+}
+
+/* ============================================================
    Neobrutalism global rules — sharp corners, thick black borders,
    hard offset shadows, chunky focus rings. These are unlayered so
    they win over Tailwind utilities (unlayered > @layer utilities in
@@ -213,10 +254,10 @@ select {
    The 461 components using `border` get solid black (color comes from --color-border)
    thick edges. border-0 / border-2 / border-4 keep their explicit widths. */
 .border {
-  border-width: 2px;
+  border-width: 3px;
 }
 .\!border {
-  border-width: 2px !important;
+  border-width: 3px !important;
 }
 
 /* Chunky offset focus ring — thick black outline, no soft glow. */
@@ -296,8 +337,8 @@ select {
   --shadow-elev: var(--shadow-elev);
   --shadow-focus: var(--shadow-focus);
 
-  /* Font - Inter primary, Apple system fallback */
-  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display', system-ui, sans-serif;
+  /* Font - Gochi Hand for the kid-drawing feel, Inter fallback for dense text */
+  --font-sans: 'Gochi Hand', 'Patrick Hand', 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
 }
 
 /* Base */
