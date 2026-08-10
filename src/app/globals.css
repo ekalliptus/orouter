@@ -1,6 +1,5 @@
 /* source() sets scan base to src/ for both webpack + Turbopack; auto-detection still skips binaries + gitignore */
 @import "tailwindcss" source("../../");
-@import url("https://fonts.googleapis.com/css2?family=Gochi+Hand&family=Patrick+Hand&display=swap");
 
 @custom-variant dark (&:where(.dark, .dark *));
 
