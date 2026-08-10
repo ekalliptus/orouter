@@ -77,7 +77,11 @@ async fn main() {
         .build()
         .expect("reqwest client build");
 
-    let state = AppState { db, client };
+    let state = AppState {
+        db,
+        client,
+        node_upstream: cfg.node_upstream.clone(),
+    };
 
     // Public auth routes (login/status/logout) — NOT behind the session gate.
     // They share the same AppState because login reads settings + updates the
@@ -129,32 +133,45 @@ async fn main() {
         .layer(middleware::from_fn(auth::middleware::require_auth))
         .with_state(state.clone());
 
-    // Reserve backend prefixes before the SPA fallback. Unknown API paths must
-    // return JSON 404 rather than index.html.
+    // Reserve backend prefixes. In hybrid mode, unknown /api and /v1 paths
+    // go to the Node reverse proxy; in standalone mode they return JSON 404.
     let backend_not_found = Router::new()
         .route("/api", any(api::not_found))
         .route("/api/*path", any(api::not_found))
         .route("/v1", any(api::not_found))
         .route("/v1/*path", any(api::not_found));
 
-    // Serve the Vite output from the same Rust process. Missing frontend routes
-    // fall back to index.html for React Router; static assets remain cacheable by
-    // the reverse proxy.
-    let static_files =
-        ServeDir::new(&cfg.static_dir).fallback(ServeFile::new(cfg.static_dir.join("index.html")));
-
-    let app = Router::new()
-        .route("/health", get(api::health))
-        .route("/v1/models", get(api::models))
-        .route("/v1/chat/completions", post(proxy::chat_completions))
-        .merge(auth_routes)
-        .merge(dashboard_routes)
-        .merge(backend_not_found)
-        .fallback_service(static_files)
-        .layer(RequestBodyLimitLayer::new(cfg.body_max_bytes))
-        .layer(CorsLayer::very_permissive())
-        .layer(TraceLayer::new_for_http())
-        .with_state(state);
+    let app = if !cfg.node_upstream.is_empty() {
+        // HYBRID MODE: reverse-proxy everything to Node/Next.js.
+        // Rust handles /health + /v1/* natively; Node handles all /api/*,
+        // dashboard pages, static assets, SSE, open-sse, etc.
+        info!(upstream = %cfg.node_upstream, "hybrid mode: reverse-proxying unhandled routes to Node");
+        Router::new()
+            .route("/health", get(api::health))
+            .route("/v1/models", get(api::models))
+            .route("/v1/chat/completions", post(proxy::chat_completions))
+            .fallback(proxy::reverse::proxy_to_node)
+            .layer(RequestBodyLimitLayer::new(cfg.body_max_bytes))
+            .layer(CorsLayer::very_permissive())
+            .layer(TraceLayer::new_for_http())
+            .with_state(state)
+    } else {
+        // STANDALONE MODE: serve the React SPA directly from Rust.
+        let static_files = ServeDir::new(&cfg.static_dir)
+            .fallback(ServeFile::new(cfg.static_dir.join("index.html")));
+        Router::new()
+            .route("/health", get(api::health))
+            .route("/v1/models", get(api::models))
+            .route("/v1/chat/completions", post(proxy::chat_completions))
+            .merge(auth_routes)
+            .merge(dashboard_routes)
+            .merge(backend_not_found)
+            .fallback_service(static_files)
+            .layer(RequestBodyLimitLayer::new(cfg.body_max_bytes))
+            .layer(CorsLayer::very_permissive())
+            .layer(TraceLayer::new_for_http())
+            .with_state(state)
+    };
 
     let listener = tokio::net::TcpListener::bind(cfg.addr())
         .await

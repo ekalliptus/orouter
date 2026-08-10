@@ -19,12 +19,17 @@ use futures_util::StreamExt;
 use serde_json::Value;
 use tracing::{debug, warn};
 
+pub mod reverse;
+
 use crate::{db::Db, snapshot};
 
 #[derive(Clone)]
 pub struct AppState {
     pub db: Db,
     pub client: reqwest::Client,
+    /// Node/Next.js upstream URL (e.g. "http://127.0.0.1:21129") for the
+    /// reverse-proxy catch-all. Empty = no fallback (standalone Rust mode).
+    pub node_upstream: String,
 }
 
 /// Errors surfaced to the client as OpenAI-style JSON.

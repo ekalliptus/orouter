@@ -20,6 +20,9 @@ pub struct Config {
     pub data_dir: PathBuf,
     /// Vite production output served by the Rust process.
     pub static_dir: PathBuf,
+    /// Node/Next.js upstream URL for reverse proxy (hybrid mode).
+    /// Empty = standalone Rust (serve static React directly).
+    pub node_upstream: String,
     /// Outbound request body cap (proxied + native), in bytes.
     pub body_max_bytes: usize,
     pub read_timeout: Duration,
@@ -53,6 +56,7 @@ impl Default for Config {
             port: DEFAULT_PORT,
             data_dir: default_data_dir(),
             static_dir: default_static_dir(),
+            node_upstream: String::new(),
             body_max_bytes: DEFAULT_BODY_MAX_MB * 1024 * 1024,
             read_timeout: Duration::from_secs(30),
             write_timeout: Duration::from_secs(5 * 60),
@@ -92,6 +96,11 @@ pub fn load() -> Config {
     if let Ok(v) = std::env::var("STATIC_DIR") {
         if !v.is_empty() {
             cfg.static_dir = PathBuf::from(v);
+        }
+    }
+    if let Ok(v) = std::env::var("NODE_UPSTREAM") {
+        if !v.is_empty() {
+            cfg.node_upstream = v.trim_end_matches('/').to_string();
         }
     }
     if let Ok(v) = std::env::var("RUST_BODY_MAX_MB") {
