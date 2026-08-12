@@ -69,11 +69,12 @@ async fn main() {
         }
     };
 
+    // No global timeout — AI streaming (SSE) can run for many minutes
+    // (Claude extended thinking, long completions). Only connect timeout applies.
     let client = reqwest::Client::builder()
         .pool_idle_timeout(Duration::from_secs(90))
         .tcp_keepalive(Duration::from_secs(60))
         .connect_timeout(cfg.read_timeout)
-        .timeout(cfg.write_timeout)
         .build()
         .expect("reqwest client build");
 
