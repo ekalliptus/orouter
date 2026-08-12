@@ -93,7 +93,7 @@ const readEnvFile = async () => {
 };
 
 // Detect 9router by base_url containing localhost/127.0.0.1 or matching tunnel URL
-const has9RouterConfig = (modelCfg) => {
+const hasORouterConfig = (modelCfg) => {
   if (!modelCfg?.base_url) return false;
   return modelCfg.provider === "custom" && /localhost|127\.0\.0\.1|0\.0\.0\.0/.test(modelCfg.base_url);
 };
@@ -109,7 +109,7 @@ export async function GET() {
     return NextResponse.json({
       installed: true,
       settings: { model },
-      has9Router: has9RouterConfig(model),
+      hasORouter: hasORouterConfig(model),
       configPath: getHermesConfigPath(),
     });
   } catch (error) {

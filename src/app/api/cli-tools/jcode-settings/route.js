@@ -44,7 +44,7 @@ const readConfig = async () => {
   }
 };
 
-const has9RouterConfig = (config) => {
+const hasORouterConfig = (config) => {
   if (!config || !config.providers) return false;
 
   const providers = config.providers;
@@ -118,12 +118,12 @@ export async function GET() {
   }
 
   const config = await readConfig();
-  const has9Router = has9RouterConfig(config);
+  const hasORouter = hasORouterConfig(config);
 
   return NextResponse.json({
     installed: true,
     config,
-    has9Router,
+    hasORouter,
     configPath: getConfigPath(),
   });
 }

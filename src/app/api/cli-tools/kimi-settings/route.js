@@ -120,7 +120,7 @@ const replaceOrAppendSection = (lines, header, bodyLines) => {
 
 // Build the config: replace [providers.9router] + replace/add a [models.<id>] linked to it.
 // Preserves all the user's other providers and models. Values are escaped for TOML.
-const buildConfigWith9Router = (existingToml, baseUrl, apiKey, model) => {
+const buildConfigWithORouter = (existingToml, baseUrl, apiKey, model) => {
   const normalizedBaseUrl = baseUrl.endsWith("/v1") ? baseUrl : `${baseUrl}/v1}`;
   const providerBody = [
     `type = "openai"`,
@@ -139,14 +139,14 @@ const buildConfigWith9Router = (existingToml, baseUrl, apiKey, model) => {
   // Replace provider section, then replace/add the model section (drop any prior 9router model), then add ours.
   lines = replaceOrAppendSection(lines, PROVIDER_SECTION, providerBody);
   // Remove any existing [models.*] blocks whose provider = "9router" (avoid stale dupes), then add ours.
-  lines = stripStale9RouterModels(lines);
+  lines = stripStaleORouterModels(lines);
   lines = replaceOrAppendSection(lines, `[${MODEL_SECTION_KEY_PREFIX}${modelId}]`, modelBody);
   return lines.join("\n");
 };
 
 // Drop [models.<id>] blocks that point at the 9router provider (cleaning up our own prior writes
 // when the model id changes). Leaves the user's other model blocks untouched.
-const stripStale9RouterModels = (lines) => {
+const stripStaleORouterModels = (lines) => {
   const out = [];
   let i = 0;
   while (i < lines.length) {
@@ -155,14 +155,14 @@ const stripStale9RouterModels = (lines) => {
     if (isModelSection) {
       // Peek the block to see if it belongs to 9router.
       let j = i + 1;
-      let blockRefs9Router = false;
+      let blockRefsORouter = false;
       while (j < lines.length) {
         const t = lines[j].trim();
         if (t === "" || t.startsWith("[")) break;
-        if (/^provider\s*=/.test(t) && t.includes(`"${PROVIDER_NAME}"`)) blockRefs9Router = true;
+        if (/^provider\s*=/.test(t) && t.includes(`"${PROVIDER_NAME}"`)) blockRefsORouter = true;
         j++;
       }
-      if (blockRefs9Router) {
+      if (blockRefsORouter) {
         i = j; // skip this block entirely
         continue;
       }
@@ -195,9 +195,9 @@ const readConfigToml = async (configPath) => {
   }
 };
 
-// 9Router is configured if a [providers.9router] section exists with a base_url pointing at
+// ORouter is configured if a [providers.9router] section exists with a base_url pointing at
 // localhost / 127.0.0.1 / 0.0.0.0 / a known tunnel. Tunnel matching is done client-side.
-const has9RouterConfig = (config) => {
+const hasORouterConfig = (config) => {
   if (!config) return false;
   const section = config[`providers.${PROVIDER_NAME}`];
   if (!section?.base_url) return false;
@@ -216,7 +216,7 @@ export async function GET() {
     return NextResponse.json({
       installed: true,
       settings: config,
-      has9Router: has9RouterConfig(config),
+      hasORouter: hasORouterConfig(config),
       configPath,
     });
   } catch (error) {
@@ -237,7 +237,7 @@ export async function POST(request) {
 
     // Merge into existing config (preserve user's other providers), don't wipe it.
     const existing = await readConfigToml(configPath);
-    const newConfig = buildConfigWith9Router(existing, baseUrl, apiKey || "sk_9router", model);
+    const newConfig = buildConfigWithORouter(existing, baseUrl, apiKey || "sk_9router", model);
     await fs.writeFile(configPath, newConfig);
 
     return NextResponse.json({
@@ -259,7 +259,7 @@ export async function DELETE() {
     }
     const existing = await readConfigToml(configPath);
     if (!existing || !existing.includes(`[providers.${PROVIDER_NAME}]`)) {
-      return NextResponse.json({ success: true, message: "No 9Router section to remove" });
+      return NextResponse.json({ success: true, message: "No ORouter section to remove" });
     }
 
     // Remove the [providers.9router] block AND any [models.*] blocks pointing at it,
@@ -282,10 +282,10 @@ export async function DELETE() {
       out.push(lines[i]);
       i++;
     }
-    lines = stripStale9RouterModels(out);
+    lines = stripStaleORouterModels(out);
     await fs.writeFile(configPath, lines.join("\n"));
 
-    return NextResponse.json({ success: true, message: "9Router provider removed from Kimi config" });
+    return NextResponse.json({ success: true, message: "ORouter provider removed from Kimi config" });
   } catch (error) {
     console.log("Error resetting kimi settings:", error);
     return NextResponse.json({ error: "Failed to reset kimi settings" }, { status: 500 });

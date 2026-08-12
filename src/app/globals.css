@@ -33,7 +33,7 @@
    Based on neobrutalism (thick black borders, hard offset shadows)
    but pushed further: hand-drawn font (Gochi Hand), saturated
    crayon palette, paper texture, wobbly edges.
-   All 9Router features remain 100% intact — only CSS variables change.
+   All ORouter features remain 100% intact — only CSS variables change.
    ============================================================ */
 :root {
   --aurora-coral: #ff6b35;

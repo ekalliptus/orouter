@@ -8,7 +8,7 @@ import ApiKeySelect from "./ApiKeySelect";
 import { matchKnownEndpoint } from "./cliEndpointMatch";
 
 const ENDPOINT = "/api/cli-tools/kimi-settings";
-// Kimi Code registers 9Router under this TOML section name.
+// Kimi Code registers ORouter under this TOML section name.
 const SECTION = "providers.9router";
 
 export default function KimiToolCard({
@@ -149,7 +149,7 @@ export default function KimiToolCard({
       const res = await fetch(ENDPOINT, { method: "DELETE" });
       const data = await res.json();
       if (res.ok) {
-        setMessage({ type: "success", text: "9Router provider removed from Kimi config" });
+        setMessage({ type: "success", text: "ORouter provider removed from Kimi config" });
         setSelectedModel("");
         checkStatus();
       } else {
@@ -326,7 +326,7 @@ capabilities = ["thinking"]
                 <Button variant="primary" size="sm" onClick={handleApply} disabled={!selectedModel} loading={applying}>
                   <span className="material-symbols-outlined text-[14px] mr-1">save</span>Apply
                 </Button>
-                <Button variant="outline" size="sm" onClick={handleReset} disabled={!kimiStatus?.has9Router} loading={restoring}>
+                <Button variant="outline" size="sm" onClick={handleReset} disabled={!kimiStatus?.hasORouter} loading={restoring}>
                   <span className="material-symbols-outlined text-[14px] mr-1">restore</span>Reset
                 </Button>
                 <Button variant="ghost" size="sm" onClick={() => setShowManualConfigModal(true)}>
