@@ -14,6 +14,30 @@ export { SSE_DONE, SSE_HEADERS, SSE_HEADERS_NO_BUFFER };
 // sharedEncoder is stateless — safe to share across streams
 const sharedEncoder = new TextEncoder();
 
+// Claude OAuth cloaking renames client tools on the request side
+// (Skill → Skill_ide). Same-format streams skip translation entirely, so the
+// raw passthrough must restore the original names itself — otherwise every
+// tool call reaches the client suffixed and fails with "Tool not found".
+// Mutates the freshly-parsed chunk; returns true when something changed.
+function decloakParsedToolNames(parsed, toolNameMap) {
+  if (!toolNameMap?.size || !parsed || typeof parsed !== "object") return false;
+  let changed = false;
+  const block = parsed.content_block;
+  if (block?.type === "tool_use" && toolNameMap.has(block.name)) {
+    block.name = toolNameMap.get(block.name);
+    changed = true;
+  }
+  if (Array.isArray(parsed.content)) {
+    for (const b of parsed.content) {
+      if (b?.type === "tool_use" && toolNameMap.has(b.name)) {
+        b.name = toolNameMap.get(b.name);
+        changed = true;
+      }
+    }
+  }
+  return changed;
+}
+
 /**
  * Stream modes
  */
@@ -112,6 +136,9 @@ export function createSSEStream(options = {}) {
 
               const idFixed = fixInvalidId(parsed);
 
+              // Restore cloaked client tool names (Claude OAuth) — see decloakParsedToolNames
+              const decloaked = decloakParsedToolNames(parsed, toolNameMap);
+
               // Ensure OpenAI-required fields are present on streaming chunks (Letta compat)
               let fieldsInjected = false;
               if (parsed.choices !== undefined) {
@@ -180,7 +207,7 @@ export function createSSEStream(options = {}) {
                 parsed.usage = filterUsageForFormat(buffered, FORMATS.OPENAI);
                 output = `data: ${JSON.stringify(parsed)}\n`;
                 injectedUsage = true;
-              } else if (idFixed || fieldsInjected) {
+              } else if (idFixed || fieldsInjected || decloaked) {
                 output = `data: ${JSON.stringify(parsed)}\n`;
                 injectedUsage = true;
               }
@@ -484,7 +511,7 @@ export function createSSETransformStreamWithLogger(targetFormat, sourceFormat, p
   });
 }
 
-export function createPassthroughStreamWithLogger(provider = null, reqLogger = null, model = null, connectionId = null, body = null, onStreamComplete = null, apiKey = null) {
+export function createPassthroughStreamWithLogger(provider = null, reqLogger = null, model = null, connectionId = null, body = null, onStreamComplete = null, apiKey = null, toolNameMap = null) {
   return createSSEStream({
     mode: STREAM_MODE.PASSTHROUGH,
     provider,
@@ -493,6 +520,7 @@ export function createPassthroughStreamWithLogger(provider = null, reqLogger = n
     connectionId,
     body,
     onStreamComplete,
-    apiKey
+    apiKey,
+    toolNameMap
   });
 }

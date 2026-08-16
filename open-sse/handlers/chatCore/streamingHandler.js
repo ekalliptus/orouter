@@ -37,7 +37,9 @@ function buildTransformStream({ provider, sourceFormat, targetFormat, userAgent,
     return createSSETransformStreamWithLogger(targetFormat, sourceFormat, provider, reqLogger, toolNameMap, model, connectionId, body, onStreamComplete, apiKey, customToolNames);
   }
 
-  return createPassthroughStreamWithLogger(provider, reqLogger, model, connectionId, body, onStreamComplete, apiKey);
+  // Same-format stream — still needs toolNameMap so raw passthrough can restore
+  // cloaked client tool names (Claude OAuth renames Skill → Skill_ide upstream).
+  return createPassthroughStreamWithLogger(provider, reqLogger, model, connectionId, body, onStreamComplete, apiKey, toolNameMap);
 }
 
 /**
