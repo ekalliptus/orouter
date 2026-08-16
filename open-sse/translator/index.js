@@ -158,12 +158,39 @@ export function translateRequest(sourceFormat, targetFormat, model, body, stream
   return result;
 }
 
+// Same-format streams skip format translation, but request-side Claude OAuth
+// cloaking may still have renamed client tools (Skill → Skill_ide). Restore
+// original names so the client doesn't see "Tool not found: <name>_ide".
+// Covers both streaming shapes (content_block_start.content_block.name) and
+// full-message shapes (content[].name) since either can reach this path.
+function decloakSameFormatChunk(chunk, state) {
+  const map = state?.toolNameMap;
+  if (!map?.size || !chunk || typeof chunk !== "object") return chunk;
+  const block = chunk.content_block;
+  if (block?.type === "tool_use" && map.has(block.name)) {
+    return { ...chunk, content_block: { ...block, name: map.get(block.name) } };
+  }
+  if (Array.isArray(chunk.content)) {
+    let changed = false;
+    const content = chunk.content.map((b) => {
+      if (b?.type === "tool_use" && map.has(b.name)) {
+        changed = true;
+        return { ...b, name: map.get(b.name) };
+      }
+      return b;
+    });
+    if (changed) return { ...chunk, content };
+  }
+  return chunk;
+}
+
 // Translate response chunk: target -> openai -> source
 export function translateResponse(targetFormat, sourceFormat, chunk, state) {
   ensureInitialized();
-  // If same format, return as-is
+  // If same format, return as-is — except cloaked tool names, which must map
+  // back to the client's original names (see decloakSameFormatChunk).
   if (sourceFormat === targetFormat) {
-    return [chunk];
+    return [decloakSameFormatChunk(chunk, state)];
   }
 
   let results = [chunk];
