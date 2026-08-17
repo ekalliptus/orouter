@@ -67,6 +67,13 @@ function applyDeepSeekV4ProAlias({ provider, model, body }) {
   return nextBody;
 }
 
+// Whether this provider/model pair gets a reasoning_content transform — used by
+// the models snapshot generator to mark models whose native path rewrites output.
+export function needsReasoningContentTransform(provider, model) {
+  return !!providerRuleFor(provider) || MODEL_RULES.some(r => r.match(model)) ||
+    (provider === "deepseek" && !!DEEPSEEK_V4_PRO_ALIASES[model]);
+}
+
 export function injectReasoningContent({ provider, model, body }) {
   const providerRule = providerRuleFor(provider);
   const modelRule = MODEL_RULES.find(r => r.match(model));

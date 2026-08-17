@@ -238,7 +238,7 @@ const snapshot = {
   nativeChatTransports,
 };
 
-const outPath = resolve(ROOT, "backend/internal/httpapi/models_snapshot.json");
+const outPath = resolve(ROOT, "rust-backend/src/snapshot/models_snapshot.json");
 writeFileSync(outPath, JSON.stringify(snapshot, null, 2) + "\n");
 
 console.log(

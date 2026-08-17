@@ -121,6 +121,8 @@ import p118 from "./selfhosted-tts.js";
 import p119 from "./selfhosted-embedding.js";
 import p120 from "./fish-audio.js";
 import p121 from "./alitp-intl.js";
+// ORouter custom providers (not in upstream 9router — re-add after every upstream sync)
+import p122 from "./agentrouter.js";
 
 export default [
   p0,
@@ -243,4 +245,5 @@ export default [
   p119,
   p120,
   p121,
+  p122,
 ];

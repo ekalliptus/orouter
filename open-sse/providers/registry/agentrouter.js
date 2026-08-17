@@ -7,9 +7,10 @@
 // Model ids are the canonical upstream ids (claude-opus-4-8, gpt-5.5, glm-5.2, …), so pricing +
 // capabilities resolve automatically via the provider-agnostic MODEL_PRICING / capabilities tables.
 // AgentRouter passes provider pricing through with no markup.
-// Catalog verified against https://agentrouter.org/api/pricing (2026-07-09). Per-token access is
-// group-scoped upstream, so the dashboard "refresh models" (GET /v1/models) narrows this static
-// seed to what each key can actually reach — e.g. a default-group key sees only glm-5.2.
+// Catalog verified against https://agentrouter.org/api/pricing (2026-08-17): live listing is
+// claude-opus-4-8, claude-opus-5, gpt-5.6-sol (enable_groups core/default/svip). Older ids stay
+// in the seed because per-token access is group-scoped upstream — the dashboard "refresh models"
+// (GET /v1/models) narrows this static seed to what each key can actually reach.
 export default {
   id: "agentrouter",
   priority: 105,
@@ -45,7 +46,9 @@ export default {
     },
   },
   models: [
+    { id: "claude-opus-5", name: "Claude Opus 5" },
     { id: "claude-opus-4-8", name: "Claude Opus 4.8" },
+    { id: "gpt-5.6-sol", name: "GPT-5.6 Sol" },
     { id: "claude-opus-4-7", name: "Claude Opus 4.7" },
     { id: "claude-opus-4-6", name: "Claude Opus 4.6" },
     { id: "gpt-5.5", name: "GPT-5.5" },

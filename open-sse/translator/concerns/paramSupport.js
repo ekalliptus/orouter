@@ -29,6 +29,12 @@ function matches(rule, model) {
   return typeof rule.match === "function" ? rule.match(model) : rule.match.test(model);
 }
 
+// Whether any STRIP_RULES entry targets this provider/model — used by the
+// models snapshot generator to mark models whose native path rewrites params.
+export function hasPotentialParamTransform(provider, model) {
+  return STRIP_RULES.some(rule => (!rule.provider || rule.provider === provider) && matches(rule, model));
+}
+
 function clampNumber(body, key, ceiling) {
   if (typeof body[key] === "number" && Number.isFinite(body[key]) && body[key] > ceiling) {
     body[key] = ceiling;
