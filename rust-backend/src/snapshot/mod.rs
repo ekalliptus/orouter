@@ -36,8 +36,10 @@ pub struct SnapModel {
     pub kind: String,
     #[serde(rename = "upstreamId", default)]
     pub upstream_id: String,
+    /// Snapshot only writes `nativeChat` when true, so absent means "unknown",
+    /// NOT false. Only an explicit false marks the model non-native.
     #[serde(rename = "nativeChat", default)]
-    pub native_chat: bool,
+    pub native_chat: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -104,23 +106,24 @@ pub fn resolve(model: &str) -> Option<ResolvedModel> {
         return None;
     }
 
-    // Map client model id → upstream id if the catalog lists one; else use as-is.
-    let upstream_model = SNAPSHOT
+    let listed = SNAPSHOT
         .provider_models
         .get(&provider_id)
-        .and_then(|models| {
-            models
-                .iter()
-                .find(|m| m.id == model_id && m.kind == "llm" && m.native_chat)
-        })
-        .map(|m| {
-            if m.upstream_id.is_empty() {
-                m.id.clone()
-            } else {
-                m.upstream_id.clone()
-            }
-        })
-        .unwrap_or_else(|| model_id.to_string());
+        .and_then(|models| models.iter().find(|m| m.id == model_id && m.kind == "llm"));
+
+    // Only an explicit nativeChat:false routes this model to Node — the flag is
+    // absent on most entries, and absence must keep the native passthrough.
+    if listed.is_some_and(|m| m.native_chat == Some(false)) {
+        return None;
+    }
+
+    // Map client model id → upstream id when configured; unknown/new ids pass
+    // through unchanged until the next snapshot regeneration.
+    let upstream_model = match listed {
+        Some(m) if !m.upstream_id.is_empty() => m.upstream_id.clone(),
+        Some(m) => m.id.clone(),
+        None => model_id.to_string(),
+    };
 
     Some(ResolvedModel {
         provider_id,

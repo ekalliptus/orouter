@@ -10,7 +10,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use axum::{
-    extract::State,
+    extract::{ConnectInfo, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     Json,
@@ -87,16 +87,17 @@ fn load_jwt_secret() -> String {
 
 fn data_dir() -> PathBuf {
     if let Ok(d) = std::env::var("DATA_DIR") {
-        if !d.is_empty() {
+        let unix_style_on_windows = d.starts_with('/');
+        #[cfg(windows)]
+        let skip = unix_style_on_windows;
+        #[cfg(not(windows))]
+        let skip = false;
+        if !d.is_empty() && !skip {
             return PathBuf::from(d);
         }
     }
-    if let Ok(home) = std::env::var("HOME") {
-        if !home.is_empty() {
-            return PathBuf::from(home).join(".9router");
-        }
-    }
-    PathBuf::from(".9router")
+    // Same base resolution as config (Windows: %APPDATA%\9router, else ~/.9router)
+    crate::config::platform_default_data_dir()
 }
 
 fn random_hex(nbytes: usize) -> String {
@@ -201,8 +202,13 @@ fn unix_secs() -> u64 {
 }
 
 /// Extract client IP (loginLimiter.getClientIp): x-forwarded-for first, then
-/// socket peer — here we approximate with x-forwarded-for / x-real-ip / "local".
-fn client_ip(headers: &HeaderMap) -> String {
+/// socket peer. Forwarded headers are trusted ONLY from loopback peers —
+/// parity with custom-server.js, which strips XFF from non-loopback clients so
+/// a remote attacker cannot rotate the limiter key to dodge lockout.
+fn client_ip(headers: &HeaderMap, peer: &std::net::SocketAddr) -> String {
+    if !peer.ip().is_loopback() {
+        return peer.ip().to_string();
+    }
     if let Some(xff) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
         if let Some(first) = xff.split(',').next() {
             return first.trim().to_string();
@@ -283,10 +289,11 @@ const RESET_HINT: &str =
 /// set the httpOnly JWT cookie. Mirrors src/app/api/auth/login/route.js.
 pub async fn login(
     State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<std::net::SocketAddr>,
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Response {
-    let ip = client_ip(&headers);
+    let ip = client_ip(&headers, &peer);
     let lock = check_lock(&ip);
     if lock.locked {
         return error_json(

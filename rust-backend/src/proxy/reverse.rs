@@ -7,7 +7,7 @@
 use axum::{
     body::Body,
     extract::{Request, State},
-    http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode},
+    http::{HeaderMap, HeaderValue, Method, StatusCode},
     response::{IntoResponse, Response},
 };
 use futures_util::StreamExt;
@@ -45,10 +45,14 @@ pub async fn proxy_to_node(State(state): State<AppState>, req: Request<Body>) ->
     for h in HOP_BY_HOP {
         req_headers.remove(*h);
     }
-    // Force host to the upstream's host.
+    // Force host to the upstream's host[:port].
     if let Ok(uri) = node_upstream.parse::<http::Uri>() {
         if let Some(host) = uri.host() {
-            if let Ok(hv) = HeaderValue::from_str(host) {
+            let host_val = match uri.port_u16() {
+                Some(p) => format!("{host}:{p}"),
+                None => host.to_string(),
+            };
+            if let Ok(hv) = HeaderValue::from_str(&host_val) {
                 req_headers.insert("host", hv);
             }
         }
@@ -66,16 +70,10 @@ pub async fn proxy_to_node(State(state): State<AppState>, req: Request<Body>) ->
 
     // Build the upstream request.
     let req_method = Method::from_bytes(method.as_str().as_bytes()).unwrap_or(Method::GET);
-    let mut hdrs = HeaderMap::new();
-    for (name, value) in &req_headers {
-        if let Ok(n) = HeaderName::from_bytes(name.as_str().as_bytes()) {
-            hdrs.insert(n, value.clone());
-        }
-    }
     let upstream_req = state
         .client
         .request(req_method, &target_url)
-        .headers(hdrs)
+        .headers(req_headers)
         .body(req_body);
 
     let upstream_resp = match upstream_req.send().await {
@@ -90,10 +88,11 @@ pub async fn proxy_to_node(State(state): State<AppState>, req: Request<Body>) ->
     let status = upstream_resp.status();
     let mut resp_headers = HeaderMap::new();
     for (name, value) in upstream_resp.headers() {
-        if HOP_BY_HOP.contains(&name.as_str()) {
+        if HOP_BY_HOP.contains(&name.as_str()) || name == "content-length" {
             continue;
         }
-        resp_headers.insert(name.clone(), value.clone());
+        // append (not insert): multiple Set-Cookie values must survive the hop.
+        resp_headers.append(name.clone(), value.clone());
     }
 
     // Stream the response body chunk-by-chunk (critical for SSE).

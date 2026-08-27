@@ -23,6 +23,18 @@ pub mod reverse;
 
 use crate::{db::Db, snapshot};
 
+/// Hop-by-hop headers stripped when forwarding (RFC 7230 §6.1).
+const HOP_BY_HOP: &[&str] = &[
+    "connection",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "te",
+    "trailers",
+    "transfer-encoding",
+    "upgrade",
+];
+
 #[derive(Clone)]
 pub struct AppState {
     pub db: Db,
@@ -136,6 +148,12 @@ pub async fn chat_completions(
     )
     .await?;
 
+    // Upstream rejected the request (401/429/5xx…): pass status + body through
+    // instead of masking it as a 200 SSE stream that only emits [DONE].
+    if !upstream.status().is_success() {
+        return Ok(relay_upstream_error(upstream).await);
+    }
+
     // Context for usage logging (M7). The SSE relay logs after the stream ends;
     // the JSON path logs from the handler.
     let usage_ctx = UsageCtx {
@@ -173,14 +191,11 @@ async fn proxy_request_to_node(
     let target_url = format!("{node_upstream}/v1/chat/completions");
     let mut hdrs = HeaderMap::new();
     for (name, value) in &headers {
-        let name_str = name.as_str();
-        if matches!(
-            name_str,
-            "host" | "content-length" | "connection" | "transfer-encoding"
-        ) {
+        let n = name.as_str();
+        if n == "host" || n == "content-length" || HOP_BY_HOP.contains(&n) {
             continue;
         }
-        hdrs.insert(name.clone(), value.clone());
+        hdrs.append(name.clone(), value.clone());
     }
     hdrs.insert("content-type", HeaderValue::from_static("application/json"));
 
@@ -199,7 +214,8 @@ async fn proxy_request_to_node(
         ) {
             continue;
         }
-        resp_headers.insert(name.clone(), value.clone());
+        // append (not insert): multiple Set-Cookie values must survive.
+        resp_headers.append(name.clone(), value.clone());
     }
 
     let stream = upstream_resp
@@ -518,6 +534,23 @@ async fn relay_json_async(
         .body(Body::from(
             serde_json::to_vec(&val).unwrap_or_else(|_| Vec::new()),
         ))
+        .unwrap()
+}
+
+/// Pass an upstream failure through to the client, preserving its status and
+/// body (errors are small — buffered read is safe).
+async fn relay_upstream_error(upstream: reqwest::Response) -> Response {
+    let status = upstream.status();
+    let content_type = upstream
+        .headers()
+        .get("content-type")
+        .cloned()
+        .unwrap_or_else(|| HeaderValue::from_static("application/json"));
+    let bytes = upstream.bytes().await.unwrap_or_default();
+    Response::builder()
+        .status(status)
+        .header("content-type", content_type)
+        .body(Body::from(bytes))
         .unwrap()
 }
 

@@ -9,12 +9,13 @@
 
 use axum::{
     body::Body,
-    extract::Request,
-    http::{HeaderMap, StatusCode, Uri},
+    extract::{ConnectInfo, Request},
+    http::StatusCode,
     middleware::Next,
     response::{IntoResponse, Response},
 };
 use serde_json::json;
+use std::net::SocketAddr;
 
 /// Paths under /api that never require a session (dashboardGuard.js
 /// PUBLIC_API_PATHS + the legacy /api/health alias).
@@ -36,21 +37,11 @@ fn is_public(path: &str) -> bool {
         .any(|p| path == *p || path.starts_with(&format!("{p}/")))
 }
 
-/// A loopback host (localhost / 127.0.0.1 / ::1) bypasses the session check,
-/// mirroring the Node guard's isLocalRequest() short-circuit. This keeps the
-/// default local-first dashboard usable without forcing a login round-trip.
-/// Non-loopback hosts (tunnels, remote) must present a valid session cookie.
-fn is_local(headers: &HeaderMap, _uri: &Uri) -> bool {
-    if let Some(host) = headers.get("host").and_then(|v| v.to_str().ok()) {
-        let name = host.split(':').next().unwrap_or("").to_lowercase();
-        if matches!(name.as_str(), "localhost" | "127.0.0.1" | "::1") {
-            return true;
-        }
-    }
-    false
-}
-
-pub async fn require_auth(req: Request<Body>, next: Next) -> Response {
+pub async fn require_auth(
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    req: Request<Body>,
+    next: Next,
+) -> Response {
     let path = req.uri().path().to_string();
 
     // Public /api paths pass straight through.
@@ -59,8 +50,9 @@ pub async fn require_auth(req: Request<Body>, next: Next) -> Response {
     }
 
     let headers = req.headers().clone();
-    // Local callers bypass (matches dashboardGuard.js isLocalRequest short-circuit).
-    if is_local(&headers, req.uri()) {
+    // Loopback peers bypass (matches dashboardGuard.js isLocalRequest, which is
+    // based on the TCP peer address — NOT the client-controlled Host header).
+    if peer.ip().is_loopback() {
         return next.run(req).await;
     }
 

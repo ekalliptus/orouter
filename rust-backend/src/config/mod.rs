@@ -88,8 +88,15 @@ pub fn load() -> Config {
             }
         }
     }
+    // Parity with src/lib/dataDir.js: a Unix-style DATA_DIR (/…) is ignored on
+    // Windows since it comes from a Linux-targeted .env/Docker config.
     if let Ok(v) = std::env::var("DATA_DIR") {
-        if !v.is_empty() {
+        let unix_style_on_windows = v.starts_with('/');
+        #[cfg(windows)]
+        let skip = unix_style_on_windows;
+        #[cfg(not(windows))]
+        let skip = false;
+        if !v.is_empty() && !skip {
             cfg.data_dir = PathBuf::from(v);
         }
     }
@@ -129,13 +136,40 @@ pub fn load() -> Config {
     cfg
 }
 
-fn default_data_dir() -> PathBuf {
-    if let Ok(home) = std::env::var("HOME") {
-        if !home.is_empty() {
-            return PathBuf::from(home).join(".9router");
-        }
+/// OS default data dir, mirroring src/lib/dataDir.js defaultDir(): on Windows
+/// Node uses `%APPDATA%\9router`; elsewhere `$HOME/.9router`. Sharing the same
+/// location is required so the Rust binary opens the SAME SQLite file.
+pub fn platform_default_data_dir() -> PathBuf {
+    #[cfg(windows)]
+    {
+        let appdata = match std::env::var("APPDATA") {
+            Ok(a) if !a.is_empty() => PathBuf::from(a),
+            _ => {
+                // APPDATA unset → homedir\AppData\Roaming (dataDir.js fallback).
+                let home = std::env::var("USERPROFILE")
+                    .or_else(|_| std::env::var("HOME"))
+                    .unwrap_or_default();
+                if home.is_empty() {
+                    return PathBuf::from(".9router");
+                }
+                PathBuf::from(home).join("AppData").join("Roaming")
+            }
+        };
+        appdata.join("9router")
     }
-    PathBuf::from(".9router")
+    #[cfg(not(windows))]
+    {
+        if let Ok(home) = std::env::var("HOME") {
+            if !home.is_empty() {
+                return PathBuf::from(home).join(".9router");
+            }
+        }
+        PathBuf::from(".9router")
+    }
+}
+
+fn default_data_dir() -> PathBuf {
+    platform_default_data_dir()
 }
 
 fn default_static_dir() -> PathBuf {

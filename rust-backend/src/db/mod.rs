@@ -203,7 +203,9 @@ impl Db {
                 .unwrap_or(true)
         })
         .await
-        .unwrap_or(false)
+        // Join/spawn failure must fail CLOSED (require the key), matching the
+        // missing-row branch above — returning false here would disable auth.
+        .unwrap_or(true)
     }
 
     /// Read the merged settings object (DEFAULT_SETTINGS ∪ stored row), minus
