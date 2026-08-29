@@ -85,6 +85,22 @@ pub async fn keys_delete(State(state): State<AppState>, Path(id): Path<String>) 
     }
 }
 
+/// PUT /api/keys/:id — {isActive: bool} kill switch (Node parity).
+pub async fn keys_update(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<Value>,
+) -> Response {
+    let Some(active) = body.get("isActive").and_then(|v| v.as_bool()) else {
+        return error_response(StatusCode::BAD_REQUEST, "isActive (boolean) is required");
+    };
+    if state.db.set_api_key_active(&id, active).await {
+        (StatusCode::OK, Json(json!({ "success": true, "isActive": active }))).into_response()
+    } else {
+        error_response(StatusCode::NOT_FOUND, "Key not found")
+    }
+}
+
 // ---- /api/providers ------------------------------------------------------
 
 pub async fn providers_get(State(state): State<AppState>) -> impl IntoResponse {
@@ -305,6 +321,23 @@ pub async fn usage_stats(
     let period = params.get("period").map(|s| s.as_str()).unwrap_or("7d");
     let stats = state.db.usage_stats(period).await;
     (StatusCode::OK, Json(stats))
+}
+
+/// GET /api/usage/chart?period= — per-day series for the usage bar chart.
+pub async fn usage_chart(
+    State(state): State<AppState>,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    let period = params.get("period").map(|s| s.as_str()).unwrap_or("7d");
+    let chart = state.db.usage_chart(period).await;
+    (StatusCode::OK, Json(chart))
+}
+
+/// GET /api/models — rich dashboard catalog (name/kind/native/pricing per
+/// provider) from the embedded snapshot. Read-only, no secrets.
+pub async fn models_catalog() -> impl IntoResponse {
+    let body = crate::snapshot::dashboard_model_catalog();
+    (StatusCode::OK, Json(body))
 }
 
 // ---- /api/combos ---------------------------------------------------------

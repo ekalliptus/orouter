@@ -30,7 +30,6 @@ pub struct NativeChatTransport {
 pub struct SnapModel {
     pub id: String,
     #[serde(default)]
-    #[allow(dead_code)]
     pub name: String,
     #[serde(default)]
     pub kind: String,
@@ -40,6 +39,9 @@ pub struct SnapModel {
     /// NOT false. Only an explicit false marks the model non-native.
     #[serde(rename = "nativeChat", default)]
     pub native_chat: Option<bool>,
+    /// {input,output,cached,cache_creation,reasoning} $/Mtok for catalog UI.
+    #[serde(default)]
+    pub pricing: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -150,4 +152,50 @@ pub fn openai_model_list() -> serde_json::Value {
         }
     }
     serde_json::json!({ "object": "list", "data": data })
+}
+
+/// Rich catalog for the dashboard Models page (GET /api/models): every
+/// provider's models with kind, native flag, upstream mapping and $/Mtok
+/// pricing so the UI can build searchable tables without guessing.
+pub fn dashboard_model_catalog() -> serde_json::Value {
+    let mut order: Vec<String> = SNAPSHOT.provider_models_order.clone();
+    let mut keys: Vec<&String> = SNAPSHOT.provider_models.keys().collect();
+    keys.sort();
+    for k in keys {
+        if !order.iter().any(|o| o == k) {
+            order.push(k.clone());
+        }
+    }
+    let mut providers_out: Vec<serde_json::Value> = Vec::new();
+    for provider in &order {
+        let Some(models) = SNAPSHOT.provider_models.get(provider) else {
+            continue;
+        };
+        let has_transport = SNAPSHOT
+            .native_chat_transports
+            .get(provider)
+            .map(|t| !t.base_url.is_empty())
+            .unwrap_or(false);
+        let models_json: Vec<serde_json::Value> = models
+            .iter()
+            .map(|m| {
+                let pricing = m.pricing.as_ref();
+                serde_json::json!({
+                    "id": m.id,
+                    "name": m.name,
+                    "kind": m.kind,
+                    "nativeChat": m.native_chat,
+                    "upstreamId": m.upstream_id,
+                    "inputPrice": pricing.and_then(|p| p.get("input")).and_then(|v| v.as_f64()),
+                    "outputPrice": pricing.and_then(|p| p.get("output")).and_then(|v| v.as_f64()),
+                })
+            })
+            .collect();
+        providers_out.push(serde_json::json!({
+            "provider": provider,
+            "hasNativeTransport": has_transport,
+            "models": models_json,
+        }));
+    }
+    serde_json::json!({ "providers": providers_out })
 }

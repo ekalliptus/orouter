@@ -415,6 +415,25 @@ impl Db {
         .unwrap_or(false)
     }
 
+    /// Enable/disable an API key (parity with Node PUT /api/keys/:id, which the
+    /// Endpoint page uses as a rotate-free kill switch).
+    pub async fn set_api_key_active(&self, id: &str, is_active: bool) -> bool {
+        let conn = self.inner.clone();
+        let id = id.to_string();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.blocking_lock();
+            let affected = conn.execute(
+                "UPDATE apiKeys SET isActive = ?1 WHERE id = ?2",
+                rusqlite::params![if is_active { 1 } else { 0 }, id],
+            )?;
+            Ok::<_, rusqlite::Error>(affected > 0)
+        })
+        .await
+        .ok()
+        .and_then(|r| r.ok())
+        .unwrap_or(false)
+    }
+
     // ============================================================
     // Combos CRUD
     // ============================================================
@@ -1051,11 +1070,11 @@ impl Db {
             let mut total_cached = 0i64;
             let mut total_cost = 0.0;
             // Collect rows first so the stmt borrow ends before we reuse conn.
-            let collected: Vec<(String, String, i64, i64, f64, String)> = if let Ok(rows) = rows {
+            let collected: Vec<(String, String, String, String, String, i64, i64, f64, String)> = if let Ok(rows) = rows {
                 rows.flatten()
-                    .map(|(provider, model, _c, _a, _e, prompt, completion, cost, tokens_json)| {
+                    .map(|(provider, model, conn_id, api_key, endpoint, prompt, completion, cost, tokens_json)| {
                         let cached = field_from_tokens(&tokens_json, "cached_tokens").and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
-                        (provider, model, prompt, completion, cost, format!("{cached}"))
+                        (provider, model, conn_id, api_key, endpoint, prompt, completion, cost, format!("{cached}"))
                     })
                     .collect()
             } else {
@@ -1063,7 +1082,7 @@ impl Db {
             };
             // Aggregate into a single day-shaped object, then split out sections.
             let mut day = new_usage_day();
-            for (provider, model, prompt, completion, cost, cached_s) in &collected {
+            for (provider, model, conn_id, api_key, endpoint, prompt, completion, cost, cached_s) in &collected {
                 let cached: i64 = cached_s.parse().unwrap_or(0);
                 total_requests += 1;
                 total_prompt += prompt;
@@ -1080,6 +1099,17 @@ impl Db {
                 let mkey = if provider.is_empty() { model.clone() } else { format!("{model}|{provider}") };
                 let meta = serde_json::json!({ "rawModel": model, "provider": provider });
                 add_bucket(&mut day, "byModel", &mkey, &vals, Some(&meta));
+                if !conn_id.is_empty() {
+                    let acct_meta = serde_json::json!({ "provider": provider });
+                    add_bucket(&mut day, "byAccount", conn_id, &vals, Some(&acct_meta));
+                }
+                if !api_key.is_empty() {
+                    add_bucket(&mut day, "byApiKey", &format!("{api_key}|{provider}"), &vals, None);
+                }
+                if !endpoint.is_empty() {
+                    let ep_meta = serde_json::json!({ "endpoint": endpoint });
+                    add_bucket(&mut day, "byEndpoint", endpoint, &vals, Some(&ep_meta));
+                }
             }
             let by_provider = day.remove("byProvider").unwrap_or_else(|| Value::Object(Default::default()));
             let by_model = day.remove("byModel").unwrap_or_else(|| Value::Object(Default::default()));
@@ -1108,9 +1138,9 @@ impl Db {
                 "totalCost": total_cost,
                 "byProvider": by_provider,
                 "byModel": by_model,
-                "byAccount": {},
-                "byApiKey": {},
-                "byEndpoint": {},
+                "byAccount": day.remove("byAccount").unwrap_or_else(|| Value::Object(Default::default())),
+                "byApiKey": day.remove("byApiKey").unwrap_or_else(|| Value::Object(Default::default())),
+                "byEndpoint": day.remove("byEndpoint").unwrap_or_else(|| Value::Object(Default::default())),
                 "recentRequests": recent,
                 "pending": { "byModel": {}, "byAccount": {} },
                 "activeRequests": [],
@@ -1119,6 +1149,72 @@ impl Db {
         })
         .await
         .unwrap_or_else(|_| serde_json::json!({ "totalRequests": 0 }))
+    }
+
+    /// Per-day usage series for the dashboard chart (GET /api/usage/chart).
+    /// Buckets usageHistory rows by local date within the period window.
+    pub async fn usage_chart(&self, period: &str) -> serde_json::Value {
+        let conn = self.inner.clone();
+        let period = period.to_string();
+        tokio::task::spawn_blocking(move || -> serde_json::Value {
+            let conn = conn.blocking_lock();
+            let now_secs = chrono_now_secs();
+            let cutoff_secs = match period.as_str() {
+                "today" => Some(now_secs - (now_secs % 86400)),
+                "24h" => Some(now_secs - 86400),
+                "7d" => Some(now_secs - 7 * 86400),
+                "30d" => Some(now_secs - 30 * 86400),
+                "60d" => Some(now_secs - 60 * 86400),
+                _ => Some(now_secs - 7 * 86400),
+            };
+            let (sql, params): (&str, Vec<Box<dyn rusqlite::ToSql>>) = match &cutoff_secs {
+                Some(secs) => (
+                    "SELECT timestamp, promptTokens, completionTokens, cost FROM usageHistory WHERE timestamp >= ?1",
+                    vec![Box::new(iso_from_secs(*secs))],
+                ),
+                None => (
+                    "SELECT timestamp, promptTokens, completionTokens, cost FROM usageHistory",
+                    vec![],
+                ),
+            };
+            let mut stmt = match conn.prepare(sql) {
+                Ok(s) => s,
+                Err(_) => return serde_json::json!({ "series": [] }),
+            };
+            let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+            let rows = stmt.query_map(param_refs.as_slice(), |r| {
+                Ok((
+                    r.get::<_, Option<String>>(0)?.unwrap_or_default(),
+                    r.get::<_, Option<i64>>(1)?.unwrap_or(0),
+                    r.get::<_, Option<i64>>(2)?.unwrap_or(0),
+                    r.get::<_, Option<f64>>(3)?.unwrap_or(0.0),
+                ))
+            });
+            // dateKey → [requests, prompt, completion, cost]
+            let mut buckets: std::collections::BTreeMap<String, (i64, i64, i64, f64)> = Default::default();
+            if let Ok(rows) = rows {
+                for (ts, prompt, completion, cost) in rows.flatten() {
+                    let key = local_date_key(&ts);
+                    let e = buckets.entry(key).or_insert((0, 0, 0, 0.0));
+                    e.0 += 1;
+                    e.1 += prompt;
+                    e.2 += completion;
+                    e.3 += cost;
+                }
+            }
+            let series: Vec<serde_json::Value> = buckets
+                .into_iter()
+                .map(|(date, (requests, prompt, completion, cost))| {
+                    serde_json::json!({
+                        "date": date, "requests": requests,
+                        "promptTokens": prompt, "completionTokens": completion, "cost": cost,
+                    })
+                })
+                .collect();
+            serde_json::json!({ "series": series })
+        })
+        .await
+        .unwrap_or_else(|_| serde_json::json!({ "series": [] }))
     }
 }
 

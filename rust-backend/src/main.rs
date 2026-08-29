@@ -91,6 +91,8 @@ async fn main() {
         .route("/api/auth/login", post(auth::login))
         .route("/api/auth/logout", post(auth::logout))
         .route("/api/auth/status", get(auth::status))
+        // /api/version is public in the Node dashboardGuard too.
+        .route("/api/version", get(api::version))
         .with_state(state.clone());
 
     // Protected dashboard routes — session-gated via require_auth middleware.
@@ -105,7 +107,8 @@ async fn main() {
         )
         .route(
             "/api/keys/:id",
-            axum::routing::delete(api::dashboard::keys_delete),
+            axum::routing::put(api::dashboard::keys_update)
+                .delete(api::dashboard::keys_delete),
         )
         .route(
             "/api/providers",
@@ -122,6 +125,12 @@ async fn main() {
         )
         .route("/api/usage/logs", get(api::dashboard::usage_logs))
         .route("/api/usage/stats", get(api::dashboard::usage_stats))
+        .route("/api/usage/chart", get(api::dashboard::usage_chart))
+        .route("/api/models", get(api::dashboard::models_catalog))
+        .route(
+            "/api/version/shutdown",
+            axum::routing::post(api::shutdown),
+        )
         .route(
             "/api/combos",
             get(api::dashboard::combos_get).post(api::dashboard::combos_post),
