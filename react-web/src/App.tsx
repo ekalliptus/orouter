@@ -10,6 +10,7 @@ import RequireAuth from "@/components/RequireAuth";
 import LoginPage from "@/pages/LoginPage";
 import EndpointPage from "@/pages/EndpointPage";
 import ProvidersPage from "@/pages/ProvidersPage";
+import ModelsPage from "@/pages/ModelsPage";
 import KeysPage from "@/pages/KeysPage";
 import UsagePage from "@/pages/UsagePage";
 import CombosPage from "@/pages/CombosPage";
@@ -43,6 +44,7 @@ export default function App() {
         <Route path="/dashboard" element={<RequireAuth><DashboardLayout /></RequireAuth>}>
           <Route index element={<EndpointPage />} />
           <Route path="providers" element={<ProvidersPage />} />
+          <Route path="models" element={<ModelsPage />} />
           <Route path="keys" element={<KeysPage />} />
           <Route path="usage" element={<UsagePage />} />
           <Route path="combos" element={<CombosPage />} />

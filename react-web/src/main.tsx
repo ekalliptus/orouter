@@ -1,8 +1,9 @@
-// Entry point. Loads fonts (Fontsource), then the two theme stylesheets
-// (tokens first, kiddraw layer second), then mounts <App/>.
+// Entry point. Loads fonts (Fontsource + Material Symbols), then the two
+// theme stylesheets (tokens first, kid layer second), then mounts <App/>.
 import "@fontsource-variable/inter";
 import "@fontsource/gochi-hand";
 import "@fontsource/patrick-hand";
+import "material-symbols/outlined.css";
 import "@/styles/theme.css";
 import "@/styles/kiddraw.css";
 

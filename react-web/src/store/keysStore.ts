@@ -21,6 +21,7 @@ interface KeysState {
   fetchKeys: (opts?: { force?: boolean }) => Promise<void>;
   createKey: (name: string) => Promise<ApiKey | null>;
   deleteKey: (id: string) => Promise<boolean>;
+  setKeyActive: (id: string, isActive: boolean) => Promise<boolean>;
 }
 
 export const useKeysStore = create<KeysState>((set, get) => ({
@@ -68,6 +69,23 @@ export const useKeysStore = create<KeysState>((set, get) => ({
       const res = await fetch(`/api/keys/${id}`, { method: "DELETE", credentials: "include" });
       if (!res.ok) return false;
       set((s) => ({ keys: s.keys.filter((k) => k.id !== id) }));
+      return true;
+    } catch {
+      return false;
+    }
+  },
+
+  // Kill switch without rotation: PUT /api/keys/:id {isActive}.
+  setKeyActive: async (id, isActive) => {
+    try {
+      const res = await fetch(`/api/keys/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ isActive }),
+      });
+      if (!res.ok) return false;
+      set((s) => ({ keys: s.keys.map((k) => (k.id === id ? { ...k, isActive } : k)) }));
       return true;
     } catch {
       return false;

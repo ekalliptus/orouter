@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router";
 import { cn } from "@/shared/utils/cn";
 import Logo from "./Logo";
@@ -9,6 +10,7 @@ interface SidebarProps {
 const navItems = [
   { href: "/dashboard", label: "Endpoint & Key", icon: "api" },
   { href: "/dashboard/providers", label: "Providers", icon: "dns" },
+  { href: "/dashboard/models", label: "Models", icon: "category" },
   { href: "/dashboard/combos", label: "Combos", icon: "layers" },
   { href: "/dashboard/usage", label: "Usage", icon: "bar_chart" },
   { href: "/dashboard/cli-tools", label: "CLI Tools", icon: "terminal" },
@@ -21,6 +23,14 @@ const systemItems = [
 export default function Sidebar({ onClose }: SidebarProps) {
   const location = useLocation();
   const pathname = location.pathname;
+  const [version, setVersion] = useState("");
+
+  useEffect(() => {
+    fetch("/api/version", { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((v: { version?: string } | null) => v?.version && setVersion(`v${v.version}`))
+      .catch(() => {});
+  }, []);
 
   const isActive = (href: string) => {
     if (href === "/dashboard") {
@@ -30,7 +40,7 @@ export default function Sidebar({ onClose }: SidebarProps) {
   };
 
   return (
-    <aside className="aurora-glass-strong flex min-h-full w-64 flex-col border-r border-border bg-sidebar transition-colors duration-300">
+    <aside className="aurora-glass-strong flex min-h-full w-72 flex-col border-r border-border-subtle bg-sidebar transition-colors duration-300">
       {/* Traffic lights */}
       <div className="flex items-center gap-2 px-6 pt-5 pb-2">
         <div className="w-3 h-3 rounded-full bg-[#FF5F56]" />
@@ -45,19 +55,22 @@ export default function Sidebar({ onClose }: SidebarProps) {
           <div className="flex flex-col">
             <h1 className="text-lg font-extrabold tracking-tight text-text-main uppercase">ORouter</h1>
             <span className="console-label text-emerald-600 dark:text-emerald-400">Control Plane · Online</span>
+            {version && (
+              <span className="text-[10px] text-text-muted">{version}</span>
+            )}
           </div>
         </Link>
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 px-4 py-2 space-y-1 overflow-y-auto custom-scrollbar">
+      <nav className="flex-1 px-4 py-2 space-y-0.5 overflow-y-auto custom-scrollbar">
         {navItems.map((item) => (
           <Link
             key={item.href}
             to={item.href}
             onClick={onClose}
             className={cn(
-              "group relative flex items-center gap-3 rounded-lg border border-transparent px-3 py-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/55",
+              "group relative flex items-center gap-3 rounded-lg border border-transparent px-3 py-1.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/55",
               isActive(item.href)
                 ? "border-brand-500/20 bg-brand-500/10 text-brand-600 before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-brand-500 dark:text-brand-300"
                 : "text-text-muted hover:bg-surface-2/70 hover:text-text-main"
@@ -65,18 +78,18 @@ export default function Sidebar({ onClose }: SidebarProps) {
           >
             <span
               className={cn(
-                "material-symbols-outlined text-[20px]",
+                "material-symbols-outlined text-[18px]",
                 isActive(item.href) ? "fill-1" : "group-hover:text-primary transition-colors"
               )}
             >
               {item.icon}
             </span>
-            <span className="text-[14px] font-medium">{item.label}</span>
+            <span className="text-[13px] font-medium">{item.label}</span>
           </Link>
         ))}
 
         {/* System section */}
-        <div className="pt-4 mt-2 space-y-1 border-t border-border-subtle">
+        <div className="pt-3 mt-2 space-y-0.5 border-t border-border-subtle">
           <p className="console-label mb-2 px-3 text-xs uppercase tracking-wider text-text-muted font-mono">
             System
           </p>
@@ -87,7 +100,7 @@ export default function Sidebar({ onClose }: SidebarProps) {
               to={item.href}
               onClick={onClose}
               className={cn(
-                "group relative flex items-center gap-3 rounded-lg border border-transparent px-3 py-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/55",
+                "group relative flex items-center gap-3 rounded-lg border border-transparent px-3 py-1.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/55",
                 isActive(item.href)
                   ? "border-brand-500/20 bg-brand-500/10 text-brand-600 before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-brand-500 dark:text-brand-300"
                   : "text-text-muted hover:bg-surface-2/70 hover:text-text-main"
@@ -95,13 +108,13 @@ export default function Sidebar({ onClose }: SidebarProps) {
             >
               <span
                 className={cn(
-                  "material-symbols-outlined text-[20px]",
+                  "material-symbols-outlined text-[18px]",
                   isActive(item.href) ? "fill-1" : "group-hover:text-primary transition-colors"
                 )}
               >
                 {item.icon}
               </span>
-              <span className="text-[14px] font-medium">{item.label}</span>
+              <span className="text-[13px] font-medium">{item.label}</span>
             </Link>
           ))}
         </div>

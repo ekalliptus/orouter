@@ -5,6 +5,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router";
 import { useNotificationStore } from "@/store/notificationStore";
+import { fetchAuthStatus } from "@/lib/useAuth";
 import CrayonFilter from "@/components/CrayonFilter";
 
 export default function LoginPage() {
@@ -31,6 +32,9 @@ export default function LoginPage() {
         return;
       }
       notify("Welcome to your crayon router!", "Let's draw");
+      // Refresh the cached auth flag BEFORE navigating: RequireAuth reads the
+      // module-level cache, which still says false from the pre-login probe.
+      await fetchAuthStatus(true);
       navigate("/dashboard");
     } catch {
       setError("Could not reach the backend. Is the Rust server running?");

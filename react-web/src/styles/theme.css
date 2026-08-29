@@ -36,13 +36,13 @@
   --color-accent-4: #4361ee;    /* poster blue */
   --color-accent-5: #06d6a0;    /* spring green */
 
-  /* ---- Surfaces (light) — warm construction paper ---- */
-  --color-bg: #f7f1e3;          /* manila craft paper */
-  --color-bg-alt: #efe6d2;
-  --color-surface: #fffdf7;     /* drawing paper, near-white warm */
+  /* ---- Surfaces (light) — warm cream, Node parity ---- */
+  --color-bg: #fffdf7;          /* warm cream page */
+  --color-bg-alt: #f7f1e3;
+  --color-surface: #ffffff;     /* pure white cards */
   --color-surface-2: #f6efdf;
   --color-surface-3: #ece1c9;
-  --color-sidebar: #f7f1e3;
+  --color-sidebar: #fffdf7;
 
   /* ---- Borders — solid marker black ---- */
   --color-border: #000000;
@@ -87,32 +87,32 @@
 }
 
 .dark {
-  /* ---- Surfaces (dark) — construction paper at night ---- */
-  --color-bg: #14110d;
-  --color-bg-alt: #1c1814;
-  --color-surface: #211c16;
-  --color-surface-2: #2c2620;
-  --color-surface-3: #3a322a;
-  --color-sidebar: #14110d;
+  /* ---- Surfaces (dark) — flat charcoal, Node parity ---- */
+  --color-bg: #131313;
+  --color-bg-alt: #181818;
+  --color-surface: #1f1f1f;
+  --color-surface-2: #2a2a2a;
+  --color-surface-3: #383838;
+  --color-sidebar: #131313;
 
   --color-border: #000000;
-  --color-border-subtle: #3a322a;
+  --color-border-subtle: #2a2a2a;
 
-  --color-text: #f7f1e3;
-  --color-text-main: #f7f1e3;
-  --color-text-muted: #c7bca9;
-  --color-text-subtle: #948874;
+  --color-text: #f5f5f0;
+  --color-text-main: #f5f5f0;
+  --color-text-muted: #b0b0a8;
+  --color-text-subtle: #80807a;
 
   --color-danger: #ff5470;
   --color-success: #2ec4b6;
   --color-warning: #ffd23f;
   --color-info: #4cc9f0;
 
-  /* offset shadows stay black; on dark paper they read as depth */
-  --nb-shadow-sm: 4px 4px 0 0 var(--nb-border);
-  --nb-shadow: 6px 6px 0 0 var(--nb-border);
-  --nb-shadow-lg: 9px 9px 0 0 var(--nb-border);
-  --nb-shadow-xl: 12px 12px 0 0 var(--nb-border);
+  /* Node dark-mode shadow sizes: slightly tighter offsets */
+  --nb-shadow-sm: 3px 3px 0 0 var(--nb-border);
+  --nb-shadow: 4px 4px 0 0 var(--nb-border);
+  --nb-shadow-lg: 6px 6px 0 0 var(--nb-border);
+  --nb-shadow-xl: 8px 8px 0 0 var(--nb-border);
 
   color-scheme: dark;
 }

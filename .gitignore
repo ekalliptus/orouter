@@ -86,3 +86,7 @@ graphify-out/*
 .codegraph/
 .PR/
 .next-analyze/*
+
+# VPS credentials backup (secrets - do not commit)
+vps-backup/
+.mimosa/

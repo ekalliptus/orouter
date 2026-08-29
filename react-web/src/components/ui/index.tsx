@@ -30,15 +30,15 @@ export const Button: React.FC<ButtonProps> = ({
   };
 
   const paddings: Record<string, string> = {
-    sm: "0.35rem 0.75rem",
-    md: "0.6rem 1.2rem",
-    lg: "0.8rem 1.5rem",
+    sm: "0.3rem 0.75rem",
+    md: "0.42rem 1rem",
+    lg: "0.55rem 1.5rem",
   };
 
   const fontSizes: Record<string, string> = {
-    sm: "0.9rem",
-    md: "1.05rem",
-    lg: "1.2rem",
+    sm: "0.72rem",
+    md: "0.875rem",
+    lg: "0.9rem",
   };
 
   return (
@@ -49,6 +49,7 @@ export const Button: React.FC<ButtonProps> = ({
         color: textColors[variant] || textColors.primary,
         padding: paddings[size] || paddings.md,
         fontSize: fontSizes[size] || fontSizes.md,
+        fontWeight: 600,
         border: variant === "ghost" ? "none" : "3px solid var(--nb-border)",
         boxShadow: variant === "ghost" ? "none" : "var(--nb-shadow-sm)",
         ...style,
@@ -73,38 +74,46 @@ export const Badge: React.FC<BadgeProps> = ({
   size = "md",
   dot = false,
 }) => {
-  const bgMap: Record<string, string> = {
+  // Node parity: tinted pill (bg color/10 + colored text); neutral uses
+  // surface-2. Warning/neutral keep main text for contrast.
+  const colorMap: Record<string, string> = {
     success: "var(--color-success)",
     danger: "var(--color-danger)",
     warning: "var(--color-warning)",
     info: "var(--color-info)",
     neutral: "var(--color-surface-3)",
   };
+  const c = colorMap[variant] || colorMap.neutral;
+  const textColor =
+    variant === "neutral" || variant === "warning"
+      ? "var(--color-text-main)"
+      : c;
 
   return (
     <span
-      className="kid-wobble"
       style={{
         display: "inline-flex",
         alignItems: "center",
-        gap: "0.35rem",
-        padding: size === "sm" ? "0.15rem 0.45rem" : "0.3rem 0.65rem",
-        fontSize: size === "sm" ? "0.8rem" : "0.95rem",
-        fontWeight: 700,
+        gap: "0.3rem",
+        padding: size === "sm" ? "0.12rem 0.5rem" : "0.22rem 0.62rem",
+        fontSize: size === "sm" ? "0.68rem" : "0.75rem",
+        fontWeight: 600,
         fontFamily: "var(--font-body)",
-        backgroundColor: bgMap[variant] || bgMap.neutral,
-        color: variant === "neutral" ? "var(--color-text-main)" : "#ffffff",
-        border: "2px solid var(--nb-border)",
-        boxShadow: "2px 2px 0 0 var(--nb-border)",
+        borderRadius: 9999,
+        backgroundColor:
+          variant === "neutral"
+            ? "var(--color-surface-2)"
+            : `color-mix(in srgb, ${c} 12%, transparent)`,
+        color: textColor,
       }}
     >
       {dot && (
         <span
           style={{
-            width: 8,
-            height: 8,
+            width: 6,
+            height: 6,
             borderRadius: "50%",
-            backgroundColor: "#ffffff",
+            backgroundColor: c,
             display: "inline-block",
           }}
         />
@@ -122,13 +131,13 @@ interface CardProps extends React.HTMLAttributes<HTMLDivElement> {
 export const Card: React.FC<CardProps> = ({
   children,
   className = "",
-  tilt = true,
+  tilt = false,
   style,
   ...props
 }) => {
   return (
     <div
-      className={`kid-card kid-wobble ${tilt ? "kid-tilt" : ""} ${className}`}
+      className={`kid-card ${tilt ? "kid-tilt" : ""} ${className}`}
       style={style}
       {...props}
     >
@@ -148,6 +157,7 @@ export const Toggle: React.FC<ToggleProps> = ({
   onChange,
   disabled = false,
 }) => {
+  // Node parity: pill track, on = brand orange, off = surface-3, clean thumb.
   return (
     <button
       type="button"
@@ -156,12 +166,11 @@ export const Toggle: React.FC<ToggleProps> = ({
       disabled={disabled}
       onClick={() => !disabled && onChange(!checked)}
       style={{
-        width: 52,
-        height: 28,
+        width: 44,
+        height: 24,
         borderRadius: 9999,
-        backgroundColor: checked ? "var(--color-success)" : "var(--color-surface-3)",
-        border: "3px solid var(--nb-border)",
-        boxShadow: "var(--nb-shadow-sm)",
+        backgroundColor: checked ? "var(--color-primary)" : "var(--color-surface-3)",
+        border: "none",
         position: "relative",
         cursor: disabled ? "not-allowed" : "pointer",
         padding: 0,
@@ -170,15 +179,14 @@ export const Toggle: React.FC<ToggleProps> = ({
     >
       <span
         style={{
-          width: 18,
-          height: 18,
+          width: 20,
+          height: 20,
           borderRadius: 9999,
           backgroundColor: "#ffffff",
-          border: "2px solid var(--nb-border)",
           position: "absolute",
           top: 2,
-          left: checked ? 26 : 2,
-          transition: "left 0.2s",
+          left: checked ? 22 : 2,
+          transition: "left 0.2s ease",
         }}
       />
     </button>

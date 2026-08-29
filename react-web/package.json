@@ -16,6 +16,7 @@
     "@fontsource/gochi-hand": "^5.2.6",
     "@fontsource/patrick-hand": "^5.2.6",
     "clsx": "^2.1.1",
+    "material-symbols": "^0.47.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-router": "^7.9.0",

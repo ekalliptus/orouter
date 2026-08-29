@@ -29,6 +29,7 @@ interface ProviderState {
   setError: (error: string | null) => void;
   fetchProviders: (opts?: { force?: boolean }) => Promise<void>;
   createProvider: (input: { provider: string; apiKey: string; name: string }) => Promise<ProviderConnection | null>;
+  putProvider: (id: string, patch: Record<string, unknown>) => Promise<ProviderConnection | null>;
   deleteProvider: (id: string) => Promise<boolean>;
   testProvider: (id: string) => Promise<{ valid: boolean; error: string | null } | null>;
 }
@@ -95,6 +96,26 @@ export const useProviderStore = create<ProviderState>((set, get) => ({
       return true;
     } catch {
       return false;
+    }
+  },
+
+  // PUT /api/providers/:id — edit name/email/apiKey/priority/isActive.
+  // The backend reorders priorities within the provider when priority changes.
+  putProvider: async (id, patch) => {
+    try {
+      const res = await fetch(`/api/providers/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(patch),
+      });
+      const data = (await res.json()) as { connection?: ProviderConnection; error?: string };
+      if (!res.ok || !data.connection) return null;
+      const updated = { ...data.connection, _id: data.connection.id ?? id };
+      set((s) => ({ providers: s.providers.map((p) => (p._id === id ? updated : p)) }));
+      return updated;
+    } catch {
+      return null;
     }
   },
 

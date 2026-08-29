@@ -87,11 +87,6 @@ export default function CombosPage() {
 
   return (
     <div className="fade-in">
-      <h1 style={{ fontSize: "2rem", marginTop: 0 }}>🧩 Model Combos</h1>
-      <p style={{ fontFamily: "var(--font-body)", color: "var(--color-text-muted)", marginTop: "-0.5rem" }}>
-        Combine multiple provider models into a single fallback chain.
-      </p>
-
       {/* Create form */}
       <form onSubmit={handleCreate} className="kid-card kid-wobble kid-tilt" style={{ marginBottom: "1.5rem", ["--tilt" as string]: "-0.5deg" }}>
         <div style={{ fontWeight: 700, fontSize: "1.15rem", marginBottom: "0.5rem" }}>＋ Create Combo</div>

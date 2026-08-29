@@ -12,6 +12,7 @@ export default function EndpointPage() {
   const fetchKeys = useKeysStore((s) => s.fetchKeys);
   const createKey = useKeysStore((s) => s.createKey);
   const deleteKey = useKeysStore((s) => s.deleteKey);
+  const setKeyActive = useKeysStore((s) => s.setKeyActive);
 
   const settings = useSettingsStore((s) => s.settings);
   const fetchSettings = useSettingsStore((s) => s.fetchSettings);
@@ -71,6 +72,13 @@ export default function EndpointPage() {
     else notify.error("Failed to delete key");
   }
 
+  async function handleToggleKey(k: ApiKey) {
+    const next = !(k.isActive !== false);
+    const ok = await setKeyActive(k.id, next);
+    if (ok) notify.success(`Key "${k.name}" ${next ? "enabled" : "disabled"}`);
+    else notify.error("Failed to update key");
+  }
+
   async function handleToggleSetting(key: string, value: boolean) {
     const updated = await patchSettings({ [key]: value });
     if (updated) {
@@ -82,14 +90,6 @@ export default function EndpointPage() {
 
   return (
     <div className="fade-in flex flex-col gap-6" style={{ maxWidth: 1000 }}>
-      {/* Title */}
-      <div>
-        <h1 style={{ fontSize: "2rem", margin: 0 }}>🔌 OpenAI Endpoint & API Keys</h1>
-        <p style={{ fontFamily: "var(--font-body)", color: "var(--color-text-muted)", margin: 0 }}>
-          Use this single endpoint & key in Cursor, Claude Code, Windsurf, or any OpenAI-compatible client.
-        </p>
-      </div>
-
       {/* Endpoint URL Box */}
       <Card tilt={false} style={{ backgroundColor: "var(--color-brand-50)", borderColor: "var(--color-brand-500)" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "1rem" }}>
@@ -136,7 +136,7 @@ export default function EndpointPage() {
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left", fontFamily: "var(--font-body)" }}>
               <thead>
-                <tr style={{ borderBottom: "3px solid var(--nb-border)", fontSize: "1.05rem" }}>
+                <tr style={{ borderBottom: "3px solid var(--nb-border)", fontSize: "0.7rem", textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--color-text-muted)" }}>
                   <th style={{ padding: "0.6rem 0.8rem" }}>Name</th>
                   <th style={{ padding: "0.6rem 0.8rem" }}>API Key</th>
                   <th style={{ padding: "0.6rem 0.8rem" }}>Status</th>
@@ -156,9 +156,15 @@ export default function EndpointPage() {
                         </code>
                       </td>
                       <td style={{ padding: "0.75rem 0.8rem" }}>
-                        <Badge variant={k.isActive !== false ? "success" : "danger"} size="sm" dot>
-                          {k.isActive !== false ? "Active" : "Disabled"}
-                        </Badge>
+                        <div style={{ display: "inline-flex", alignItems: "center", gap: "0.5rem" }}>
+                          <Badge variant={k.isActive !== false ? "success" : "danger"} size="sm" dot>
+                            {k.isActive !== false ? "Active" : "Disabled"}
+                          </Badge>
+                          <Toggle
+                            checked={k.isActive !== false}
+                            onChange={() => handleToggleKey(k)}
+                          />
+                        </div>
                       </td>
                       <td style={{ padding: "0.75rem 0.8rem", textAlign: "right" }}>
                         <div style={{ display: "inline-flex", gap: "0.4rem" }}>
