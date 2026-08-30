@@ -1,3 +1,11 @@
+# v0.5.59 (2026-08-30)
+
+## Sync
+- Aligned with upstream 9router v0.5.59 (npm channel). Verified upstream
+  v0.5.56–v0.5.59 shipped an app build byte-identical to v0.5.55 with zero
+  dependency changes — the entire delta is: new pt-BR translation keys, a
+  new `xquik` provider icon, and the version bump. Rust gateway untouched.
+
 # v0.5.55 (2026-08-14)
 
 ## Features
