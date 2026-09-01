@@ -850,7 +850,234 @@ impl Db {
         .flatten()
     }
 
-    // ---- M7: usage write path (port of chat_writes.go) --------------------
+    // ============================================================
+    // Proxy pools CRUD — parity with Node proxyPoolsRepo. The pool payload
+    // lives in the `data` JSON blob: {name, proxyUrl, noProxy, type,
+    // strictProxy, lastTestedAt, lastError}.
+    // ============================================================
+
+    pub async fn list_proxy_pools(&self) -> Vec<serde_json::Value> {
+        let conn = self.inner.clone();
+        tokio::task::spawn_blocking(move || -> Vec<serde_json::Value> {
+            let conn = conn.blocking_lock();
+            let mut stmt = match conn.prepare(
+                "SELECT id, isActive, testStatus, data, createdAt, updatedAt FROM proxyPools ORDER BY createdAt ASC",
+            ) {
+                Ok(s) => s,
+                Err(_) => return Vec::new(),
+            };
+            let rows = stmt
+                .query_map([], |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, i64>(1)?,
+                        r.get::<_, Option<String>>(2)?,
+                        r.get::<_, String>(3)?,
+                        r.get::<_, String>(4)?,
+                        r.get::<_, String>(5)?,
+                    ))
+                })
+                .ok()
+                .into_iter()
+                .flatten()
+                .filter_map(Result::ok);
+            rows.map(|(id, is_active, test_status, data, created, updated)| {
+                let mut val: Value = serde_json::from_str(&data).unwrap_or_else(|_| Value::Object(Default::default()));
+                if let Some(obj) = val.as_object_mut() {
+                    obj.insert("id".into(), Value::String(id));
+                    obj.insert("isActive".into(), Value::Bool(is_active == 1));
+                    obj.insert("testStatus".into(), test_status.into());
+                    obj.insert("createdAt".into(), Value::String(created));
+                    obj.insert("updatedAt".into(), Value::String(updated));
+                }
+                val
+            })
+            .collect()
+        })
+        .await
+        .unwrap_or_default()
+    }
+
+    pub async fn get_proxy_pool(&self, id: &str) -> Option<Value> {
+        let conn = self.inner.clone();
+        let id = id.to_string();
+        tokio::task::spawn_blocking(move || -> Option<Value> {
+            let conn = conn.blocking_lock();
+            let row = conn
+                .query_row(
+                    "SELECT isActive, testStatus, data, createdAt, updatedAt FROM proxyPools WHERE id = ?1",
+                    rusqlite::params![&id],
+                    |r| {
+                        Ok((
+                            r.get::<_, i64>(0)?,
+                            r.get::<_, Option<String>>(1)?,
+                            r.get::<_, String>(2)?,
+                            r.get::<_, String>(3)?,
+                            r.get::<_, String>(4)?,
+                        ))
+                    },
+                )
+                .ok()?;
+            let (is_active, test_status, data, created, updated) = row;
+            let mut val: Value = serde_json::from_str(&data).unwrap_or_else(|_| Value::Object(Default::default()));
+            if let Some(obj) = val.as_object_mut() {
+                obj.insert("id".into(), Value::String(id));
+                obj.insert("isActive".into(), Value::Bool(is_active == 1));
+                obj.insert("testStatus".into(), test_status.into());
+                obj.insert("createdAt".into(), Value::String(created));
+                obj.insert("updatedAt".into(), Value::String(updated));
+            }
+            Some(val)
+        })
+        .await
+        .ok()
+        .flatten()
+    }
+
+    /// Create/update a pool from the merged JSON value. Returns the pool id.
+    pub async fn upsert_proxy_pool(&self, mut pool: Value) -> anyhow::Result<String> {
+        use uuid::Uuid;
+        let obj = pool
+            .as_object_mut()
+            .ok_or_else(|| anyhow::anyhow!("pool body must be an object"))?;
+        let id = obj
+            .entry("id".to_string())
+            .or_insert_with(|| Value::String(Uuid::new_v4().to_string()))
+            .as_str()
+            .unwrap_or("")
+            .to_string();
+        anyhow::ensure!(!id.is_empty(), "pool id is required");
+        anyhow::ensure!(
+            obj.get("proxyUrl").and_then(|v| v.as_str()).is_some_and(|s| !s.trim().is_empty()),
+            "proxyUrl is required"
+        );
+        let now = now_iso8601();
+        obj.insert("updatedAt".into(), Value::String(now.clone()));
+        let created = obj
+            .get("createdAt")
+            .and_then(|v| v.as_str())
+            .map(String::from)
+            .unwrap_or_else(|| now.clone());
+        obj.entry("createdAt".to_string())
+            .or_insert_with(|| Value::String(created.clone()));
+        obj.entry("isActive".to_string()).or_insert(Value::Bool(true));
+        obj.entry("testStatus".to_string()).or_insert(Value::String("unknown".into()));
+        let is_active = obj.get("isActive").and_then(|v| v.as_bool()).unwrap_or(true);
+        let test_status = obj
+            .get("testStatus")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+        let data_json = serde_json::to_string(&pool)?;
+
+        let conn = self.inner.clone();
+        let id_ret = id.clone();
+        tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+            let conn = conn.blocking_lock();
+            conn.execute(
+                "INSERT INTO proxyPools(id, isActive, testStatus, data, createdAt, updatedAt)
+                 VALUES(?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT(id) DO UPDATE SET isActive=excluded.isActive, testStatus=excluded.testStatus,
+                   data=excluded.data, updatedAt=excluded.updatedAt",
+                rusqlite::params![id, is_active as i64, test_status, data_json, created, now],
+            )?;
+            Ok(())
+        })
+        .await??;
+        Ok(id_ret)
+    }
+
+    pub async fn delete_proxy_pool(&self, id: &str) -> bool {
+        let conn = self.inner.clone();
+        let id = id.to_string();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.blocking_lock();
+            let affected = conn.execute("DELETE FROM proxyPools WHERE id = ?1", rusqlite::params![id])?;
+            Ok::<_, rusqlite::Error>(affected > 0)
+        })
+        .await
+        .ok()
+        .and_then(|r| r.ok())
+        .unwrap_or(false)
+    }
+
+    /// Persist a pool test outcome (testStatus/lastError/lastTestedAt).
+    pub async fn mark_proxy_pool_tested(&self, id: &str, ok: bool, error: Option<String>) {
+        let conn = self.inner.clone();
+        let id = id.to_string();
+        tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+            let conn = conn.blocking_lock();
+            let data: Option<String> = conn
+                .query_row("SELECT data FROM proxyPools WHERE id = ?1", rusqlite::params![&id], |r| r.get(0))
+                .ok();
+            let Some(data) = data else { return Ok(()) };
+            let mut val: Value = serde_json::from_str(&data).unwrap_or_else(|_| Value::Object(Default::default()));
+            if let Some(obj) = val.as_object_mut() {
+                obj.insert("testStatus".into(), Value::String(if ok { "active".into() } else { "error".into() }));
+                obj.insert("lastError".into(), error.clone().map(Value::String).unwrap_or(Value::Null));
+                obj.insert("lastTestedAt".into(), Value::String(now_iso8601()));
+            }
+            conn.execute(
+                "UPDATE proxyPools SET testStatus = ?1, data = ?2, updatedAt = ?3 WHERE id = ?4",
+                rusqlite::params![
+                    if ok { "active" } else { "error" },
+                    serde_json::to_string(&val)?,
+                    now_iso8601(),
+                    id
+                ],
+            )?;
+            Ok(())
+        })
+        .await
+        .ok();
+    }
+
+    /// Resolve the proxy a connection must use, mirroring chatCore.js:
+    /// providerSpecificData.connectionProxyEnabled+connectionProxyUrl wins,
+    /// then connectionProxyPoolId → that pool's proxyUrl (isActive only).
+    /// Returns Some(proxy_url) or None (direct).
+    pub async fn resolve_connection_proxy(&self, connection_id: &str) -> Option<String> {
+        let conn_full = self.get_connection_full(connection_id).await?;
+        let psd = conn_full.get("providerSpecificData")?.as_object()?;
+        if psd.get("connectionProxyEnabled").and_then(|v| v.as_bool()).unwrap_or(false) {
+            if let Some(url) = psd.get("connectionProxyUrl").and_then(|v| v.as_str()).filter(|s| !s.trim().is_empty()) {
+                return Some(url.trim().to_string());
+            }
+        }
+        let pool_id = psd.get("connectionProxyPoolId").and_then(|v| v.as_str())?;
+        if pool_id.is_empty() || pool_id == "none" {
+            return None;
+        }
+        let pool = self.get_proxy_pool(pool_id).await?;
+        if pool.get("isActive").and_then(|v| v.as_bool()).unwrap_or(false) {
+            pool.get("proxyUrl")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .map(|s| s.trim().to_string())
+        } else {
+            None
+        }
+    }
+
+    // ============================================================
+    // Per-connection quota (GET /api/usage/:connectionId). Only providers
+    // with a plain authenticated GET are natively supported today
+    // (openrouter credits); everything else reports unavailable.
+    // ============================================================
+
+    /// Load a connection's credential + provider for quota probing.
+    pub async fn connection_for_quota(&self, id: &str) -> Option<(String, String)> {
+        let conn = self.get_connection_full(id).await?;
+        let provider = conn.get("provider")?.as_str()?.to_string();
+        let secret = conn
+            .get("apiKey")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .or_else(|| conn.get("accessToken").and_then(|v| v.as_str()))
+            .map(|s| s.to_string())?;
+        Some((provider, secret))
+    }
+
 
     /// Persist a completed chat request's usage: usageHistory row + usageDaily
     /// rollup + lifetime counter, in one transaction. Dedup suppresses repeated

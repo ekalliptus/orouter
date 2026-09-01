@@ -13,6 +13,9 @@ const navItems = [
   { href: "/dashboard/models", label: "Models", icon: "category" },
   { href: "/dashboard/combos", label: "Combos", icon: "layers" },
   { href: "/dashboard/usage", label: "Usage", icon: "bar_chart" },
+  { href: "/dashboard/quota", label: "Quota Tracker", icon: "data_usage" },
+  { href: "/dashboard/proxy-pools", label: "Proxy Pools", icon: "hub" },
+  { href: "/dashboard/console-log", label: "Console Log", icon: "monitoring" },
   { href: "/dashboard/cli-tools", label: "CLI Tools", icon: "terminal" },
 ];
 

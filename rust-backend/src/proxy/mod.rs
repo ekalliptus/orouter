@@ -6,6 +6,8 @@
 //! chat_transport.go), scoped to the OpenAI→OpenAI same-format passthrough the
 //! Go backend already serves. No format translation in v1.
 
+use std::collections::HashMap;
+use std::sync::Mutex;
 use std::time::Duration;
 
 use axum::{
@@ -42,6 +44,48 @@ pub struct AppState {
     /// Node/Next.js upstream URL (e.g. "http://127.0.0.1:21129") for the
     /// reverse-proxy catch-all. Empty = no fallback (standalone Rust mode).
     pub node_upstream: String,
+    /// reqwest clients built per proxy URL (chat + connection tests route
+    /// through pools/per-connection proxies). Lazily populated.
+    pub proxy_clients: std::sync::Arc<Mutex<HashMap<String, reqwest::Client>>>,
+}
+
+impl AppState {
+    /// Client for an optional proxy URL: the shared direct client when None,
+    /// otherwise a cached client configured with that proxy.
+    pub fn client_for(&self, proxy_url: Option<&str>) -> reqwest::Client {
+        let Some(url) = proxy_url.map(str::trim).filter(|s| !s.is_empty()) else {
+            return self.client.clone();
+        };
+        if let Ok(map) = self.proxy_clients.lock() {
+            if let Some(c) = map.get(url) {
+                return c.clone();
+            }
+        }
+        match reqwest::Proxy::all(url) {
+            Ok(proxy) => match reqwest::Client::builder()
+                .pool_idle_timeout(Duration::from_secs(90))
+                .tcp_keepalive(Duration::from_secs(60))
+                .connect_timeout(Duration::from_secs(30))
+                .proxy(proxy)
+                .build()
+            {
+                Ok(c) => {
+                    if let Ok(mut map) = self.proxy_clients.lock() {
+                        map.insert(url.to_string(), c.clone());
+                    }
+                    c
+                }
+                Err(e) => {
+                    warn!(proxy = %url, "proxy client build failed: {e}");
+                    self.client.clone()
+                }
+            },
+            Err(e) => {
+                warn!(proxy = %url, "proxy config invalid: {e}");
+                self.client.clone()
+            }
+        }
+    }
 }
 
 /// Errors surfaced to the client as OpenAI-style JSON.
@@ -139,8 +183,16 @@ pub async fn chat_completions(
         .unwrap_or(false);
     let inbound_api_key = extract_api_key(&headers);
 
+    // Resolve the connection's proxy directive (per-connection URL or pool),
+    // mirroring chatCore.js. None = direct connection.
+    let proxy_url = state.db.resolve_connection_proxy(&cred.connection_id).await;
+    if let Some(ref p) = proxy_url {
+        tracing::info!(proxy = %p, provider = %resolved.provider_id, "routing upstream via proxy");
+    }
+    let http = state.client_for(proxy_url.as_deref());
+
     let upstream = execute_upstream(
-        &state,
+        &http,
         &resolved,
         cred.secret.clone(),
         payload_bytes,
@@ -254,7 +306,7 @@ fn extract_api_key(headers: &HeaderMap) -> Option<String> {
 /// Build + send the upstream request, applying the Go retry policy
 /// (502×3, 503×3, 504×2, network×3 — chat_transport.go:63-113).
 async fn execute_upstream(
-    state: &AppState,
+    http: &reqwest::Client,
     resolved: &snapshot::ResolvedModel,
     secret: String,
     payload: Vec<u8>,
@@ -296,8 +348,7 @@ async fn execute_upstream(
                 hdrs.insert(name, val);
             }
         }
-        let req = state
-            .client
+        let req = http
             .post(&transport.base_url)
             .headers(hdrs)
             .body(payload.clone());

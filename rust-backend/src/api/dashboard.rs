@@ -11,9 +11,10 @@
 //! outbound proxy env mutation) which are out of v1 scope.
 
 use axum::{
+    body::Body,
     extract::{Path, State},
-    http::StatusCode,
-    response::IntoResponse,
+    http::{HeaderValue, StatusCode},
+    response::{IntoResponse, Response},
     Json,
 };
 use serde_json::{json, Value};
@@ -309,6 +310,201 @@ pub async fn providers_test(State(state): State<AppState>, Path(id): Path<String
 
 // ---- /api/usage (M7) -----------------------------------------------------
 
+// ---- /api/proxy-pools -----------------------------------------------------
+
+pub async fn proxy_pools_get(State(state): State<AppState>) -> impl IntoResponse {
+    let pools = state.db.list_proxy_pools().await;
+    (StatusCode::OK, Json(json!({ "pools": pools })))
+}
+
+pub async fn proxy_pools_post(State(state): State<AppState>, Json(mut body): Json<Value>) -> Response {
+    // id in body = update (PUT semantics through POST create/update merge).
+    match state.db.upsert_proxy_pool(std::mem::take(&mut body)).await {
+        Ok(id) => match state.db.get_proxy_pool(&id).await {
+            Some(pool) => (StatusCode::CREATED, Json(json!({ "pool": pool }))).into_response(),
+            None => error_response(StatusCode::INTERNAL_SERVER_ERROR, "pool vanished after save"),
+        },
+        Err(e) => error_response(StatusCode::BAD_REQUEST, &e.to_string()),
+    }
+}
+
+pub async fn proxy_pools_delete(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    if state.db.delete_proxy_pool(&id).await {
+        (StatusCode::OK, Json(json!({ "success": true }))).into_response()
+    } else {
+        error_response(StatusCode::NOT_FOUND, "Pool not found")
+    }
+}
+
+/// POST /api/proxy-pools/:id/test — verify the proxy answers by fetching an
+/// IP echo endpoint through it; persists testStatus/lastError/lastTestedAt.
+pub async fn proxy_pools_test(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    let Some(pool) = state.db.get_proxy_pool(&id).await else {
+        return error_response(StatusCode::NOT_FOUND, "Pool not found");
+    };
+    let Some(proxy_url) = pool.get("proxyUrl").and_then(|v| v.as_str()).map(String::from) else {
+        return error_response(StatusCode::BAD_REQUEST, "Pool has no proxyUrl");
+    };
+
+    let client = state.client_for(Some(&proxy_url));
+    let result = client
+        .get("https://api.ipify.org?format=json")
+        .timeout(std::time::Duration::from_secs(15))
+        .send()
+        .await;
+    let (ok, detail) = match result {
+        Ok(r) => {
+            let status = r.status();
+            match r.json::<Value>().await {
+                Ok(v) => (status.is_success(), v.get("ip").and_then(|x| x.as_str()).map(String::from)),
+                Err(_) => (status.is_success(), None),
+            }
+        }
+        Err(e) => (false, Some(format!("network error: {e}"))),
+    };
+    state
+        .db
+        .mark_proxy_pool_tested(&id, ok, if ok { detail.clone() } else { detail.clone().or(Some("unreachable".into())) })
+        .await;
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "valid": ok,
+            "exitIp": if ok { detail.clone().map(Value::String).unwrap_or(Value::Null) } else { Value::Null },
+            "error": if ok { Value::Null } else { Value::String(detail.unwrap_or_else(|| "unreachable".into())) },
+        })),
+    )
+        .into_response()
+}
+
+// ---- /api/usage/:connectionId — per-connection quota ----------------------
+
+pub async fn connection_quota(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    let Some(conn) = state.db.get_connection_full(&id).await else {
+        return error_response(StatusCode::NOT_FOUND, "Connection not found");
+    };
+    let Some((provider, secret)) = state.db.connection_for_quota(&id).await else {
+        return error_response(StatusCode::BAD_REQUEST, "Connection has no usable credential");
+    };
+
+    // Native today: OpenRouter's authenticated key endpoint exposes limit +
+    // usage directly. Other providers need the Node engine (OAuth quota).
+    if provider == "openrouter" {
+        let client = state.client_for(state.db.resolve_connection_proxy(&id).await.as_deref());
+        let resp = client
+            .get("https://openrouter.ai/api/v1/auth/key")
+            .header("authorization", format!("Bearer {secret}"))
+            .timeout(std::time::Duration::from_secs(15))
+            .send()
+            .await;
+        match resp {
+            Ok(r) if r.status().is_success() => {
+                if let Ok(v) = r.json::<Value>().await {
+                    let d = v.get("data").cloned().unwrap_or(Value::Null);
+                    return (
+                        StatusCode::OK,
+                        Json(json!({
+                            "available": true,
+                            "provider": provider,
+                            "connectionId": id,
+                            "label": d.get("label"),
+                            "limit": d.get("limit"),
+                            "usage": d.get("usage"),
+                            "limitRemaining": d.get("limit_remaining"),
+                            "isFreeTier": d.get("is_free_tier"),
+                            "raw": d,
+                        })),
+                    )
+                        .into_response();
+                }
+            }
+            Ok(r) => {
+                let status = r.status().as_u16();
+                return (
+                    StatusCode::OK,
+                    Json(json!({
+                        "available": false,
+                        "provider": provider,
+                        "connectionId": id,
+                        "error": format!("upstream HTTP {status}"),
+                    })),
+                )
+                    .into_response();
+            }
+            Err(e) => {
+                return (
+                    StatusCode::OK,
+                    Json(json!({ "available": false, "provider": provider, "connectionId": id, "error": format!("network error: {e}") })),
+                )
+                    .into_response();
+            }
+        }
+    }
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "available": false,
+            "provider": provider,
+            "connectionId": id,
+            "reason": "live quota for this provider requires the Node engine (start hybrid mode with NODE_UPSTREAM)",
+            "testStatus": conn.get("testStatus").cloned().unwrap_or(Value::Null),
+            "lastError": conn.get("lastError").cloned().unwrap_or(Value::Null),
+        })),
+    )
+        .into_response()
+}
+
+// ---- /api/console-logs — in-process tail ----------------------------------
+
+pub async fn console_logs_get(
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    let limit = params
+        .get("limit")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(500);
+    (StatusCode::OK, Json(json!({ "logs": crate::logs::recent(limit) })))
+}
+
+pub async fn console_logs_clear() -> impl IntoResponse {
+    crate::logs::clear();
+    (StatusCode::OK, Json(json!({ "success": true })))
+}
+
+/// GET /api/console-logs/stream — SSE: snapshot first, then live tail.
+pub async fn console_logs_stream() -> impl IntoResponse {
+    let rx = crate::logs::subscribe();
+    let stream = async_stream::stream! {
+        // Initial snapshot so a fresh page shows history immediately.
+        for line in crate::logs::recent(300) {
+            let payload = serde_json::to_string(&line).unwrap_or_default();
+            yield Ok::<bytes::Bytes, std::io::Error>(bytes::Bytes::from(format!("data: {payload}\n\n")));
+        }
+        let mut rx = rx;
+        loop {
+            match rx.recv().await {
+                Ok(line) => {
+                    let payload = serde_json::to_string(&line.to_json()).unwrap_or_default();
+                    yield Ok(bytes::Bytes::from(format!("data: {payload}\n\n")));
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(_) => break,
+            }
+        }
+    };
+    let mut resp = Response::new(Body::from_stream(stream));
+    *resp.status_mut() = StatusCode::OK;
+    resp.headers_mut()
+        .insert("content-type", HeaderValue::from_static("text/event-stream"));
+    resp.headers_mut()
+        .insert("cache-control", HeaderValue::from_static("no-cache"));
+    resp
+}
+
+// ---- /api/cli-tools (M7 stub kept above) ----------------------------------
+
 pub async fn usage_logs(State(state): State<AppState>) -> impl IntoResponse {
     let logs = state.db.recent_logs(200).await;
     (StatusCode::OK, Json(logs))
@@ -385,8 +581,6 @@ pub async fn cli_tools_get() -> impl IntoResponse {
     ]);
     (StatusCode::OK, Json(json!({ "tools": tools })))
 }
-
-use axum::response::Response;
 
 fn error_response(status: StatusCode, message: &str) -> Response {
     (status, Json(json!({ "error": message }))).into_response()

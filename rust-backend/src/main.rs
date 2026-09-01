@@ -14,6 +14,7 @@ mod api;
 mod auth;
 mod config;
 mod db;
+mod logs;
 mod proxy;
 mod snapshot;
 
@@ -37,13 +38,9 @@ use tracing::info;
 async fn main() {
     let cfg = config::load();
 
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| cfg.log_level.clone().into()),
-        )
-        .with_target(false)
-        .init();
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| cfg.log_level.clone().into());
+    logs::init_tracing(filter);
 
     info!(
         port = cfg.port,
@@ -82,6 +79,7 @@ async fn main() {
         db,
         client,
         node_upstream: cfg.node_upstream.clone(),
+        proxy_clients: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
     };
 
     // Public auth routes (login/status/logout) — NOT behind the session gate.
@@ -126,6 +124,30 @@ async fn main() {
         .route("/api/usage/logs", get(api::dashboard::usage_logs))
         .route("/api/usage/stats", get(api::dashboard::usage_stats))
         .route("/api/usage/chart", get(api::dashboard::usage_chart))
+        .route(
+            "/api/usage/:connectionId",
+            get(api::dashboard::connection_quota),
+        )
+        .route(
+            "/api/proxy-pools",
+            get(api::dashboard::proxy_pools_get).post(api::dashboard::proxy_pools_post),
+        )
+        .route(
+            "/api/proxy-pools/:id/test",
+            axum::routing::post(api::dashboard::proxy_pools_test),
+        )
+        .route(
+            "/api/proxy-pools/:id",
+            axum::routing::delete(api::dashboard::proxy_pools_delete),
+        )
+        .route(
+            "/api/console-logs",
+            get(api::dashboard::console_logs_get).delete(api::dashboard::console_logs_clear),
+        )
+        .route(
+            "/api/console-logs/stream",
+            get(api::dashboard::console_logs_stream),
+        )
         .route("/api/models", get(api::dashboard::models_catalog))
         .route(
             "/api/version/shutdown",
