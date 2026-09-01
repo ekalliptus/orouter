@@ -19,9 +19,9 @@ defineProps<{ size?: number }>();
       aria-hidden="true"
     >
       <rect x="4" y="4" width="25" height="25" fill="var(--nb-border, #000)" />
-      <rect x="1" y="1" width="25" height="25" fill="#FF6B35" stroke="#000000" stroke-width="2.5" />
+      <rect x="1" y="1" width="25" height="25" fill="var(--color-brand-500, #4caf50)" stroke="#000000" stroke-width="2.5" />
       <circle cx="13.5" cy="13.5" r="8" fill="#FFD23F" stroke="#000000" stroke-width="2.5" />
-      <circle cx="13.5" cy="13.5" r="3.5" fill="#FF6B35" stroke="#000000" stroke-width="2" />
+      <circle cx="13.5" cy="13.5" r="3.5" fill="var(--color-brand-500, #4caf50)" stroke="#000000" stroke-width="2" />
     </svg>
   </span>
 </template>

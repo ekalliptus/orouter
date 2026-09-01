@@ -14,17 +14,17 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 :root {
-  /* ---- Brand (orange anchor, kept) ---- */
-  --color-brand-50: #fff3ec;
-  --color-brand-100: #ffe0cf;
-  --color-brand-200: #ffc09a;
-  --color-brand-300: #ff9e66;
-  --color-brand-400: #ff8347;
-  --color-brand-500: #ff6b35;
-  --color-brand-600: #e85420;
-  --color-brand-700: #bf3f12;
-  --color-brand-800: #8c2f0e;
-  --color-brand-900: #5a1f08;
+  /* ---- Brand (leaf green anchor) ---- */
+  --color-brand-50: #eef9ee;
+  --color-brand-100: #d6f0d6;
+  --color-brand-200: #b2e3b2;
+  --color-brand-300: #8dd38d;
+  --color-brand-400: #66c466;
+  --color-brand-500: #4caf50;
+  --color-brand-600: #3d9142;
+  --color-brand-700: #2f7333;
+  --color-brand-800: #215525;
+  --color-brand-900: #143817;
 
   --color-primary: var(--color-brand-500);
   --color-primary-hover: var(--color-brand-600);
