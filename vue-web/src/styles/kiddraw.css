@@ -1,0 +1,295 @@
+/* ============================================================
+   kiddraw.css — the "5-year-old's crayon drawing" layer.
+   Sits on top of theme.css. Three ingredients:
+
+   1. An SVG displacement filter (#crayon-edge) that wobbles every
+      bordered element's edges so they look hand-drawn, not vector-straight.
+   2. Paper texture + crayon stroke backgrounds.
+   3. Global overrides: thick marker borders, big offset shadows, chunky
+      focus rings, hand-drawn fonts (set via --font-sans in theme.css).
+
+   The filter is opt-in via .kid-wobble on elements where the wavy edge is
+   desired (cards, buttons, inputs, the sidebar). It is OFF by default on
+   text and tiny UI to keep things readable. `prefers-reduced-motion`
+   disables the filter entirely (motion-sensitive users + performance).
+   ============================================================ */
+
+/* ---- The crayon-edge SVG filter is injected once by <CrayonFilter/>
+      in main.tsx as an inline <svg>. We reference it by id here. ---- */
+.kid-wobble {
+  filter: url(#crayon-edge);
+}
+
+/* Stronger wobble variant for hero / landing surfaces. */
+.kid-wobble-strong {
+  filter: url(#crayon-edge-strong);
+}
+
+/* ---- Random paper-cut tilt. Set --tilt inline for per-element variety;
+   .kid-tilt just applies whatever rotation --tilt resolves to (0 by default). ---- */
+.kid-tilt {
+  transform: rotate(var(--tilt, 0deg));
+}
+
+/* nth-child variety (Node values): gentle alternating collage skew. */
+.kid-tilt-list > *:nth-child(3n + 1) { --tilt: -1.2deg; }
+.kid-tilt-list > *:nth-child(3n + 2) { --tilt: 0.8deg; }
+.kid-tilt-list > *:nth-child(3n + 3) { --tilt: -0.5deg; }
+
+/* ============================================================
+   Global neobrutalism rules (ported from the old globals.css, tuned
+   for the kid palette: thicker borders, bigger offset shadows).
+   Unlayered so they win over Tailwind utilities.
+   ============================================================ */
+
+/* Sharp corners everywhere by default — paper cut-outs, not rounded UI.
+   .rounded-full is restored so toggles/badges/avatars stay circular. */
+*,
+*::before,
+*::after {
+  border-radius: 0 !important;
+}
+.rounded-full,
+.\!rounded-full {
+  border-radius: 9999px !important;
+}
+
+/* The bare `border` utility becomes a thick marker stroke. */
+.border {
+  border-width: 3px;
+}
+.\!border {
+  border-width: 3px !important;
+}
+
+/* Chunky focus ring — Node parity: black outline + hard offset shadow. */
+:focus-visible {
+  outline: 3px solid #000;
+  outline-offset: 2px;
+  box-shadow: var(--nb-shadow-sm);
+}
+
+/* Buttons/inputs that carry a shadow utility get a marker border too. */
+:where(button, [role="button"]).shadow-soft,
+:where(button, [role="button"]).shadow-warm,
+:where(button, [role="button"]).shadow-elev,
+:where(button, [role="button"]).shadow-elevated {
+  border: 3px solid var(--nb-border);
+}
+
+/* ============================================================
+   Paper texture on the body. Node parity: two faint fixed radial
+   washes — pink top-left, blue bottom-right.
+   ============================================================ */
+body {
+  background-color: var(--color-bg);
+  background-image:
+    radial-gradient(circle at 0% 0%, color-mix(in srgb, #ff6b9d 10%, transparent) 0%, transparent 45%),
+    radial-gradient(circle at 100% 100%, color-mix(in srgb, #4361ee 8%, transparent) 0%, transparent 45%);
+  background-attachment: fixed;
+  color: var(--color-text-main);
+  font-family: var(--font-sans);
+  letter-spacing: 0.01em;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Blueprint grid overlay behind dashboard content (Node .landing-grid). */
+.landing-grid {
+  position: absolute;
+  inset: 0;
+  z-index: -10;
+  pointer-events: none;
+  background-image:
+    linear-gradient(to right, color-mix(in srgb, var(--color-text-main) 9%, transparent) 1px, transparent 1px),
+    linear-gradient(to bottom, color-mix(in srgb, var(--color-text-main) 9%, transparent) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+.dark .landing-grid {
+  background-image:
+    linear-gradient(to right, color-mix(in srgb, var(--color-text-main) 5%, transparent) 1px, transparent 1px),
+    linear-gradient(to bottom, color-mix(in srgb, var(--color-text-main) 5%, transparent) 1px, transparent 1px);
+}
+
+/* ============================================================
+   Crayon button — the signature interactive surface.
+   Marker border, big offset shadow that presses in on :active,
+   and a faint diagonal crayon-stroke overlay.
+   ============================================================ */
+.kid-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.45rem 1rem;
+  font-family: var(--font-sans);
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--color-text-main);
+  background-color: var(--color-surface);
+  border: 3px solid var(--nb-border);
+  border-radius: 0;
+  box-shadow: var(--nb-shadow-sm);
+  cursor: pointer;
+  user-select: none;
+  transition: transform 80ms ease, box-shadow 80ms ease;
+}
+.kid-btn:hover {
+  transform: translate(-1px, -1px);
+  box-shadow: var(--nb-shadow);
+}
+.kid-btn:active {
+  transform: scale(0.97);
+  box-shadow: var(--nb-shadow-sm);
+}
+.kid-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: var(--nb-shadow);
+}
+.kid-btn--primary {
+  background-color: var(--color-primary);
+  color: #fff;
+}
+.kid-btn--accent {
+  background-color: var(--color-accent);
+}
+.kid-btn--pink {
+  background-color: var(--color-accent-3);
+  color: #fff;
+}
+.kid-btn--blue {
+  background-color: var(--color-accent-4);
+  color: #fff;
+}
+
+/* Card surface — a glued sheet of paper. */
+.kid-card {
+  position: relative;
+  background-color: var(--color-surface);
+  border: 3px solid var(--nb-border);
+  box-shadow: var(--nb-shadow);
+  padding: 1.25rem;
+}
+
+/* Input — ruled-paper field. */
+.kid-input {
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  font-family: var(--font-body);
+  font-size: 0.95rem;
+  color: var(--color-text-main);
+  background-color: var(--color-surface-2);
+  border: 1px solid transparent;
+  border-radius: 0;
+  outline: none;
+}
+.kid-input::placeholder {
+  color: var(--color-text-subtle);
+}
+.kid-input:focus {
+  border-color: var(--color-brand-500);
+  outline: 2px solid color-mix(in srgb, var(--color-brand-500) 30%, transparent);
+  outline-offset: 0;
+}
+
+/* ============================================================
+   Animations (ported/tuned from old globals.css).
+   ============================================================ */
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+.animate-spin { animation: spin 1s linear infinite; }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+.animate-pulse { animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.fade-in { animation: fadeIn 0.2s ease-out forwards; }
+
+@keyframes slideInFromRight {
+  from { transform: translateX(100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+.slide-in-right { animation: slideInFromRight 0.25s cubic-bezier(0.22, 1, 0.36, 1) forwards; }
+
+@keyframes slideInFromTop {
+  from { transform: translateY(-10px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+.slide-in-top { animation: slideInFromTop 0.18s cubic-bezier(0.22, 1, 0.36, 1) forwards; }
+
+/* ============================================================
+   Accessibility: reduced motion / reduced transparency disables the
+   crayon-edge filter (it is a displacement animation visually + a GPU
+   cost) and flattens the paper overlays.
+   ============================================================ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+  .kid-wobble,
+  .kid-wobble-strong {
+    filter: none;
+  }
+  .kid-tilt,
+  .kid-tilt-list > * {
+    transform: none !important;
+  }
+}
+
+/* ============================================================
+   Material Symbols — rules mirrored from Node globals.css.
+   ============================================================ */
+.material-symbols-outlined {
+  font-weight: normal;
+  font-style: normal;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  display: inline-block;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
+  font-feature-settings: 'liga';
+  -webkit-font-feature-settings: 'liga';
+  -webkit-font-smoothing: antialiased;
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+}
+.material-symbols-outlined.fill-1 {
+  font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+}
+
+/* Selection — highlighter swipe (Node: accent 50%). */
+::selection {
+  background-color: color-mix(in srgb, var(--color-accent) 50%, transparent);
+  color: var(--color-text-main);
+}
+
+/* Restore pointer cursors Tailwind v4 dropped. */
+button:not(:disabled),
+[role="button"]:not([aria-disabled="true"]),
+label[for],
+summary,
+select {
+  cursor: pointer;
+}
+button:disabled,
+[role="button"][aria-disabled="true"] {
+  cursor: not-allowed;
+}

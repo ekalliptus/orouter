@@ -173,14 +173,15 @@ fn default_data_dir() -> PathBuf {
 }
 
 fn default_static_dir() -> PathBuf {
-    // Running from the repo root is the common local path; running from
-    // rust-backend/ remains supported. Production always sets STATIC_DIR.
-    let root = PathBuf::from("react-web/dist");
-    if root.is_dir() {
-        root
-    } else {
-        PathBuf::from("../react-web/dist")
+    // Full-native mode serves the Vue SPA. Prefer vue-web/dist; fall back to
+    // the older react-web build, then repo-root-relative variants.
+    for candidate in ["vue-web/dist", "../vue-web/dist", "react-web/dist", "../react-web/dist"] {
+        let p = PathBuf::from(candidate);
+        if p.is_dir() {
+            return p;
+        }
     }
+    PathBuf::from("../vue-web/dist")
 }
 
 /// Minimal human duration parser: supports "30s", "5m", "1h", or bare seconds.
