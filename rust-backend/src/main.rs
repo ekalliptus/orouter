@@ -17,6 +17,7 @@ mod db;
 mod logs;
 mod oauth;
 mod proxy;
+mod quota;
 mod snapshot;
 
 use std::time::Duration;

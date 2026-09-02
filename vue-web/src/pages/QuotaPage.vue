@@ -23,11 +23,10 @@ interface Connection {
 interface QuotaResult {
   available?: boolean;
   provider?: string;
-  label?: string | null;
-  limit?: number | null;
-  usage?: number | null;
-  limitRemaining?: number | null;
-  isFreeTier?: boolean | null;
+  plan?: string | null;
+  quotas?: { name: string; displayName?: string | null; remainingPct: number; usedPct: number; total?: number; resetAt?: string | null }[];
+  dollars?: { label?: string | null; limit?: number | null; usage?: number | null; limitRemaining?: number | null; isFreeTier?: boolean | null } | null;
+  message?: string | null;
   error?: string | null;
   reason?: string | null;
   testStatus?: string | null;
@@ -112,32 +111,57 @@ interface QuotaRow {
   detail: string;
 }
 
+function emojiFor(pct: number | null): string {
+  return pct === null ? "⚪" : pct > 70 ? "🟢" : pct >= 30 ? "🟡" : "🔴";
+}
+
 function rowsFor(r: QuotaResult): QuotaRow[] {
   if (!r.available) return [];
-  const used = typeof r.usage === "number" ? r.usage : null;
-  const total = typeof r.limit === "number" ? r.limit : null;
-  const remaining = typeof r.limitRemaining === "number"
-    ? r.limitRemaining
-    : total !== null && used !== null
-      ? total - used
+
+  // Percent-window providers (claude / codex / antigravity / glm): native
+  // `quotas[]` with remainingPct per window.
+  const rows: QuotaRow[] = (r.quotas ?? []).map((q) => {
+    const pct = Math.max(0, Math.min(100, Math.round(q.remainingPct)));
+    const reset = q.resetAt
+      ? new Date(q.resetAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
       : null;
-  const pctRemaining = total !== null && total > 0 && remaining !== null
-    ? Math.max(0, Math.min(100, Math.round((remaining / total) * 100)))
-    : null;
-  const emoji = pctRemaining === null ? "⚪" : pctRemaining > 70 ? "🟢" : pctRemaining >= 30 ? "🟡" : "🔴";
-  const name = r.label ?? "Primary quota";
-  const detail = total !== null
-    ? `$${used?.toFixed(2) ?? "?"} / $${total.toFixed(2)} · ${pctRemaining}% left`
-    : `used $${used?.toFixed(2) ?? "?"} · no hard limit`;
-  return [{
-    name,
-    emoji,
-    pctRemaining,
-    used,
-    total,
-    remainingAbs: remaining,
-    detail,
-  }];
+    return {
+      name: (q.displayName ?? q.name) + (q.total === 1000 ? "" : ""),
+      emoji: emojiFor(pct),
+      pctRemaining: pct,
+      used: q.usedPct !== undefined ? Math.round(q.usedPct) : null,
+      total: 100,
+      remainingAbs: null,
+      detail: `${Math.round(q.usedPct)}% used${reset ? ` · resets ${reset}` : ""}`,
+    };
+  });
+
+  // Dollar-based providers (openrouter credits).
+  if (r.dollars) {
+    const d = r.dollars;
+    const used = typeof d.usage === "number" ? d.usage : null;
+    const total = typeof d.limit === "number" ? d.limit : null;
+    const remaining = typeof d.limitRemaining === "number"
+      ? d.limitRemaining
+      : total !== null && used !== null
+        ? total - used
+        : null;
+    const pct = total !== null && total > 0 && remaining !== null
+      ? Math.max(0, Math.min(100, Math.round((remaining / total) * 100)))
+      : null;
+    rows.push({
+      name: d.label ?? "Credits",
+      emoji: emojiFor(pct),
+      pctRemaining: pct,
+      used,
+      total,
+      remainingAbs: remaining,
+      detail: total !== null
+        ? `$${used?.toFixed(2) ?? "?"} / $${total.toFixed(2)} · ${pct}% left`
+        : `used $${used?.toFixed(2) ?? "?"} · no hard limit`,
+    });
+  }
+  return rows;
 }
 
 const eligible = computed(() => connections.value.filter((c) => c.isActive !== false));
@@ -257,6 +281,9 @@ function iconSrc(c: Connection) {
 
           <!-- Probed: quota rows -->
           <template v-else>
+            <div v-if="results[c.id]?.plan" style="font-family: var(--font-body); font-size: 0.82rem; color: var(--color-text-muted); margin-bottom: 0.3rem">
+              Plan: <strong style="color: var(--color-text-main)">{{ results[c.id].plan }}</strong>
+            </div>
             <div v-if="rowsFor(results[c.id]).length > 0" style="font-family: var(--font-body); font-size: 0.82rem; color: var(--color-text-muted); margin-bottom: 0.4rem">
               {{ rowsFor(results[c.id]).length }} quota(s)
             </div>

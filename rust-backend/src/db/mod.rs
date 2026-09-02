@@ -1843,6 +1843,10 @@ pub fn parse_rfc3339_secs_pub(s: &str) -> Option<i64> {
     parse_rfc3339_secs(s)
 }
 
+pub fn chrono_now_secs_pub() -> i64 {
+    chrono_now_secs()
+}
+
 /// Unix secs → ISO 8601 UTC (crate-public for the oauth module).
 pub fn iso_from_secs_pub(secs: i64) -> String {
     iso_from_secs(secs)

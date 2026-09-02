@@ -556,76 +556,10 @@ pub async fn connection_quota(State(state): State<AppState>, Path(id): Path<Stri
     let Some(conn) = state.db.get_connection_full(&id).await else {
         return error_response(StatusCode::NOT_FOUND, "Connection not found");
     };
-    let Some((provider, secret)) = state.db.connection_for_quota(&id).await else {
-        return error_response(StatusCode::BAD_REQUEST, "Connection has no usable credential");
-    };
-
-    // Native today: OpenRouter's authenticated key endpoint exposes limit +
-    // usage directly. Other providers need the Node engine (OAuth quota).
-    if provider == "openrouter" {
-        let client = state.client_for(state.db.resolve_connection_proxy(&id).await.as_deref());
-        let resp = client
-            .get("https://openrouter.ai/api/v1/auth/key")
-            .header("authorization", format!("Bearer {secret}"))
-            .timeout(std::time::Duration::from_secs(15))
-            .send()
-            .await;
-        match resp {
-            Ok(r) if r.status().is_success() => {
-                if let Ok(v) = r.json::<Value>().await {
-                    let d = v.get("data").cloned().unwrap_or(Value::Null);
-                    return (
-                        StatusCode::OK,
-                        Json(json!({
-                            "available": true,
-                            "provider": provider,
-                            "connectionId": id,
-                            "label": d.get("label"),
-                            "limit": d.get("limit"),
-                            "usage": d.get("usage"),
-                            "limitRemaining": d.get("limit_remaining"),
-                            "isFreeTier": d.get("is_free_tier"),
-                            "raw": d,
-                        })),
-                    )
-                        .into_response();
-                }
-            }
-            Ok(r) => {
-                let status = r.status().as_u16();
-                return (
-                    StatusCode::OK,
-                    Json(json!({
-                        "available": false,
-                        "provider": provider,
-                        "connectionId": id,
-                        "error": format!("upstream HTTP {status}"),
-                    })),
-                )
-                    .into_response();
-            }
-            Err(e) => {
-                return (
-                    StatusCode::OK,
-                    Json(json!({ "available": false, "provider": provider, "connectionId": id, "error": format!("network error: {e}") })),
-                )
-                    .into_response();
-            }
-        }
-    }
-
-    (
-        StatusCode::OK,
-        Json(json!({
-            "available": false,
-            "provider": provider,
-            "connectionId": id,
-            "reason": "live quota for this provider requires the Node engine (start hybrid mode with NODE_UPSTREAM)",
-            "testStatus": conn.get("testStatus").cloned().unwrap_or(Value::Null),
-            "lastError": conn.get("lastError").cloned().unwrap_or(Value::Null),
-        })),
-    )
-        .into_response()
+    // Proxy-aware: quota probes follow the connection's pool/URL directive.
+    let http = state.client_for(state.db.resolve_connection_proxy(&id).await.as_deref());
+    let payload = crate::quota::fetch_quota(&state.db, &http, &conn).await;
+    (StatusCode::OK, Json(payload)).into_response()
 }
 
 // ---- /api/console-logs — in-process tail ----------------------------------
