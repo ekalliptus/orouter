@@ -83,6 +83,12 @@ async fn main() {
         proxy_clients: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
     };
 
+    // Keep OAuth tokens fresh so hybrid-mode inference always has valid creds.
+    tokio::spawn(crate::oauth::auto_refresh_loop(
+        state.db.clone(),
+        state.client.clone(),
+    ));
+
     // Public auth routes (login/status/logout) — NOT behind the session gate.
     // They share the same AppState because login reads settings + updates the
     // login limiter using the DB.
@@ -162,6 +168,14 @@ async fn main() {
         .route(
             "/api/oauth/:provider/refresh",
             axum::routing::post(api::dashboard::oauth_refresh),
+        )
+        .route(
+            "/api/translator/dumps",
+            get(api::dashboard::translator_dumps_list),
+        )
+        .route(
+            "/api/translator/dumps/:name",
+            get(api::dashboard::translator_dumps_get),
         )
         .route(
             "/api/version/shutdown",

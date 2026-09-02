@@ -2,6 +2,23 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Full-native Rust stack (rust-backend + vue-web) — NEW
+
+Beyond the Node artifacts below, this repo ships a **fully native Rust stack**:
+
+- `rust-backend/` — axum server (port 20130, standalone by default). Serves the Vue SPA from
+  `vue-web/dist`, the full dashboard API (`/api/settings|keys|providers|models|combos|usage/*|
+  proxy-pools|console-logs|oauth/*|translator/dumps|version`), the OpenAI-compatible gateway
+  (`/v1/chat/completions` native passthrough with per-connection/pool proxy routing), SSE log
+  streaming, and an OAuth-token auto-refresh loop (6h lead, 15 min cadence).
+- `vue-web/` — Vue 3 + Vite dashboard (bun build). Same 9Router design language as the Node app.
+- OAuth (claude/codex/antigravity): PKCE S256 login/refresh is native (`rust-backend/src/oauth.rs`).
+  Antigravity's Google client secret comes from `ANTIGRAVITY_OAUTH_CLIENT_SECRET` env, falling back
+  to the Node registry file. **Inference** for OAuth providers still needs the Node translator:
+  run hybrid (`NODE_UPSTREAM=http://127.0.0.1:20129`) and non-native chat falls through.
+- Conventions: Conventional Commits; the shared SQLite (`%APPDATA%/9router/db/data.sqlite` on
+  Windows) is opened read/write by BOTH engines — keep WAL + busy_timeout.
+
 ## What this is
 
 9Router (`9router-app`) — a local AI routing gateway + Next.js dashboard. It exposes one OpenAI-compatible endpoint (`/v1/*`) and routes traffic across 40+ upstream providers with format translation, model-combo fallback, multi-account fallback, OAuth/API-key credential management, token refresh, quota/usage tracking, and optional cloud sync.

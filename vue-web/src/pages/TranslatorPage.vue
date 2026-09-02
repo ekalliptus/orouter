@@ -60,8 +60,34 @@ async function send() {
   }
 }
 
+// ---- Translation capture dumps ----
+
+interface DumpFile { name: string; size: number }
+const dumps = ref<DumpFile[]>([]);
+const dumpContent = ref("");
+
+async function loadDumps() {
+  try {
+    const r = await fetch("/api/translator/dumps", { credentials: "include" });
+    const data = (await r.json()) as { files?: DumpFile[] };
+    dumps.value = data.files ?? [];
+  } catch {
+    toast.error("Failed to list dumps");
+  }
+}
+
+async function viewDump(name: string) {
+  try {
+    dumpContent.value = await fetch(`/api/translator/dumps/${encodeURIComponent(name)}`, {
+      credentials: "include",
+    }).then((r) => r.text());
+  } catch {
+    toast.error("Failed to load dump");
+  }
+}
+
 onMounted(() => {
-  // nothing extra yet
+  loadDumps();
 });
 </script>
 
@@ -97,6 +123,27 @@ onMounted(() => {
         Raw response
       </div>
       <pre style="font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.78rem; padding: 0.8rem; overflow-x: auto; white-space: pre-wrap; word-break: break-word; margin: 0">{{ response }}</pre>
+    </div>
+
+    <!-- Translation capture dumps (Node hybrid runs write these) -->
+    <div class="kid-card" style="padding: 0">
+      <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.5rem 0.8rem; border-bottom: 2px solid var(--color-surface-3)">
+        <span style="font-family: var(--font-body); font-size: 0.85rem; color: var(--color-text-muted)">
+          Translation pipeline dumps (logs/translator — written by hybrid Node runs)
+        </span>
+        <button class="kid-btn" style="padding: 0.2rem 0.55rem; font-size: 0.8rem" @click="loadDumps">
+          <span class="material-symbols-outlined" style="font-size: 14px">refresh</span>
+        </button>
+      </div>
+      <div v-if="dumps.length === 0" style="padding: 1rem; font-family: var(--font-body); font-size: 0.9rem; color: var(--color-text-muted)">
+        No captures yet. Run a chat through hybrid mode with ENABLE_TRANSLATOR=true, then refresh.
+      </div>
+      <div v-else style="display: flex; flex-wrap: wrap; gap: 0.4rem; padding: 0.7rem 0.8rem">
+        <button v-for="d in dumps" :key="d.name" class="kid-btn" style="padding: 0.2rem 0.55rem; font-size: 0.8rem" @click="viewDump(d.name)">
+          {{ d.name }} <span style="color: var(--color-text-muted)">({{ d.size }}b)</span>
+        </button>
+      </div>
+      <pre v-if="dumpContent" style="font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.75rem; padding: 0.8rem; overflow-x: auto; white-space: pre-wrap; word-break: break-word; margin: 0; border-top: 2px solid var(--color-surface-3); max-height: 40vh; overflow-y: auto">{{ dumpContent }}</pre>
     </div>
 
     <div class="kid-card" style="background: color-mix(in srgb, var(--color-info) 8%, var(--color-surface))">

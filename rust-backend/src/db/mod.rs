@@ -909,6 +909,38 @@ impl Db {
     }
 
 
+    /// Connections whose OAuth token expires within `lead_secs` (or already
+    /// expired) AND carry a refresh token. Used by the background refresher.
+    pub async fn oauth_refresh_candidates(&self, lead_secs: i64) -> Vec<(String, String)> {
+        let conn = self.inner.clone();
+        tokio::task::spawn_blocking(move || -> Vec<(String, String)> {
+            let conn = conn.blocking_lock();
+            let Ok(mut stmt) = conn
+                .prepare("SELECT id, provider, data FROM providerConnections WHERE authType = 'oauth' AND isActive = 1")
+            else {
+                return Vec::new();
+            };
+            let rows = stmt
+                .query_map([], |r| {
+                    Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
+                })
+                .ok()
+                .into_iter()
+                .flatten()
+                .filter_map(Result::ok);
+            let now = chrono_now_secs();
+            rows.filter_map(|(id, provider, data)| {
+                let v: Value = serde_json::from_str(&data).ok()?;
+                let has_refresh = v.get("refreshToken").and_then(|v| v.as_str()).is_some_and(|s| !s.is_empty());
+                let exp = v.get("expiresAt").and_then(|v| v.as_str()).and_then(parse_rfc3339_secs).unwrap_or(0);
+                (has_refresh && exp > 0 && exp - now <= lead_secs).then_some((id, provider))
+            })
+            .collect()
+        })
+        .await
+        .unwrap_or_default()
+    }
+
     /// Read a single connection's full data blob (including secrets) — used by
     /// the connection-test handler to fetch the apiKey + transport info.
     pub async fn get_connection_full(&self, id: &str) -> Option<Value> {

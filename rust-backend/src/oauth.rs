@@ -48,6 +48,32 @@ pub enum TokenEncoding {
     Form,
 }
 
+/// Antigravity's Google client secret: env first, then fall back to reading
+/// the Node engine's own registry file (same repo, already ships the value).
+/// Never hardcoded here.
+fn antigravity_secret() -> String {
+    if let Ok(s) = std::env::var("ANTIGRAVITY_OAUTH_CLIENT_SECRET") {
+        if !s.trim().is_empty() {
+            return s;
+        }
+    }
+    for cand in [
+        "../open-sse/providers/registry/antigravity.js",
+        "open-sse/providers/registry/antigravity.js",
+    ] {
+        if let Ok(text) = std::fs::read_to_string(cand) {
+            if let Some(pos) = text.find("clientSecret:") {
+                let rest = text[pos + "clientSecret:".len()..].trim_start();
+                let rest = rest.trim_start_matches(['"', '\'']);
+                if let Some(end) = rest.find(['"', '\'']) {
+                    return rest[..end].to_string();
+                }
+            }
+        }
+    }
+    String::new()
+}
+
 pub fn cfg(provider: &str) -> Option<ProviderCfg> {
     match provider {
         "claude" => Some(ProviderCfg {
@@ -85,8 +111,9 @@ pub fn cfg(provider: &str) -> Option<ProviderCfg> {
             authorize_url: "https://accounts.google.com/o/oauth2/v2/auth",
             token_url: "https://oauth2.googleapis.com/token",
             client_id: "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com",
-            // From env — never hardcoded (see module docs).
-            client_secret: std::env::var("ANTIGRAVITY_OAUTH_CLIENT_SECRET").unwrap_or_default(),
+            // From env, or read from the Node engine's registry file — never
+            // hardcoded here (see antigravity_secret).
+            client_secret: antigravity_secret(),
             scope: "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/cclog https://www.googleapis.com/auth/experimentsandconfigs",
             // Google loopback: any port is allowed for installed clients.
             redirect_uri: "http://localhost:51121/callback",
@@ -318,6 +345,28 @@ pub async fn refresh(
         "expiresAt": expires_at,
         "scope": mapped.scope,
     }))
+}
+
+/// Background loop: refresh OAuth tokens expiring within the next 6 hours so
+/// hybrid-mode inference always sees valid credentials. Runs every 15 min.
+pub async fn auto_refresh_loop(db: Db, http: reqwest::Client) {
+    let mut interval = tokio::time::interval(Duration::from_secs(15 * 60));
+    interval.tick().await; // skip the immediate tick at boot
+    loop {
+        interval.tick().await;
+        let candidates = db.oauth_refresh_candidates(6 * 3600).await;
+        for (id, provider) in candidates {
+            match refresh(&db, &http, &id).await {
+                Ok(v) => {
+                    let exp = v.get("expiresAt").and_then(|x| x.as_str()).unwrap_or("?");
+                    tracing::info!(connection = %id, provider = %provider, "auto-refreshed OAuth token (expires {exp})");
+                }
+                Err(e) => {
+                    tracing::warn!(connection = %id, provider = %provider, "auto-refresh failed: {e}");
+                }
+            }
+        }
+    }
 }
 
 /// Expiry info for the status badge.

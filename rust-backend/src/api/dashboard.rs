@@ -372,6 +372,77 @@ pub async fn oauth_refresh(
     }
 }
 
+// ---- /api/translator — native parity with the Node translator builder ----
+//
+// The Node builder reads captured translation-pipeline dumps from
+// <cwd>/logs/translator/ (1_req_client.json … 7_res_client.txt). We serve the
+// SAME files so captures written by a hybrid Node run are inspectable here.
+
+fn translator_dump_dir() -> std::path::PathBuf {
+    for cand in ["logs/translator", "../logs/translator"] {
+        let p = std::path::PathBuf::from(cand);
+        if p.is_dir() {
+            return p;
+        }
+    }
+    std::path::PathBuf::from("../logs/translator")
+}
+
+pub async fn translator_dumps_list() -> impl IntoResponse {
+    let dir = translator_dump_dir();
+    let mut files: Vec<Value> = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(&dir) {
+        for entry in rd.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') {
+                continue;
+            }
+            let (size, modified) = match entry.metadata() {
+                Ok(m) => (
+                    m.len(),
+                    m.modified()
+                        .ok()
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0),
+                ),
+                Err(_) => (0, 0),
+            };
+            files.push(json!({ "name": name, "size": size, "modifiedSecs": modified }));
+        }
+    }
+    files.sort_by(|a, b| {
+        b.get("modifiedSecs")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0)
+            .cmp(&a.get("modifiedSecs").and_then(|v| v.as_u64()).unwrap_or(0))
+    });
+    (StatusCode::OK, Json(json!({ "dir": dir.display().to_string(), "files": files })))
+}
+
+/// GET /api/translator/dumps/:name — raw file content. The filename is
+/// validated (no separators, Node's stage-dump naming shape).
+pub async fn translator_dumps_get(Path(name): Path<String>) -> Response {
+    let safe = !name.is_empty()
+        && !name.contains(['/', '\\'])
+        && !name.contains("..")
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'));
+    if !safe {
+        return error_response(StatusCode::BAD_REQUEST, "invalid file name");
+    }
+    let path = translator_dump_dir().join(&name);
+    match std::fs::read(&path) {
+        Ok(bytes) => Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "text/plain; charset=utf-8")
+            .body(Body::from(bytes))
+            .unwrap(),
+        Err(_) => error_response(StatusCode::NOT_FOUND, "capture file not found"),
+    }
+}
+
 // ---- /api/usage (M7) -----------------------------------------------------
 
 // ---- /api/proxy-pools -----------------------------------------------------
