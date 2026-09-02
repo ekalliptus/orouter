@@ -8,6 +8,8 @@
 //! Embedding it means the Rust binary needs no Node round-trip for /v1/models
 //! or for model→provider resolution on the chat path.
 
+use std::collections::HashMap;
+
 use once_cell::sync::Lazy;
 use serde::Deserialize;
 
@@ -98,12 +100,39 @@ pub struct ResolvedModel {
 /// model + transport, exactly as the Go native path does
 /// (chat_resolver.go resolveNativeChatBase). Returns None when the provider is
 /// unknown or has no native transport (caller should fall through / error).
+/// Fallback chat transports for OpenAI-compatible providers that the embedded
+/// snapshot does not cover with nativeChatTransports (glm international uses
+/// z.ai; glm-cn uses bigmodel). Same wire format as the OpenAI passthrough.
+fn fallback_transport(provider_id: &str) -> Option<NativeChatTransport> {
+    let url = match provider_id {
+        "glm" => "https://api.z.ai/api/paas/v4/chat/completions",
+        "glm-cn" => "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+        _ => return None,
+    };
+    Some(NativeChatTransport {
+        base_url: url.to_string(),
+        headers: HashMap::new(),
+        auth_header: "authorization".to_string(),
+        auth_scheme: "bearer".to_string(),
+        timeout_ms: 60000,
+    })
+}
+
+fn transport_for(provider_id: &str) -> Option<NativeChatTransport> {
+    SNAPSHOT
+        .native_chat_transports
+        .get(provider_id)
+        .cloned()
+        .filter(|t| !t.base_url.is_empty())
+        .or_else(|| fallback_transport(provider_id))
+}
+
 pub fn resolve(model: &str) -> Option<ResolvedModel> {
     let (provider_token, model_id) = model.split_once('/')?;
     let provider_id = SNAPSHOT.resolve_provider(provider_token)?.to_string();
 
     // Transport must exist with a base URL — otherwise this provider needs Node.
-    let transport = SNAPSHOT.native_chat_transports.get(&provider_id)?.clone();
+    let transport = transport_for(&provider_id)?;
     if transport.base_url.is_empty() {
         return None;
     }
@@ -155,7 +184,7 @@ pub fn resolve_candidates(model_id: &str) -> Vec<ResolvedModel> {
         if m.native_chat == Some(false) {
             continue;
         }
-        let Some(transport) = SNAPSHOT.native_chat_transports.get(provider).cloned() else { continue };
+        let Some(transport) = transport_for(provider) else { continue };
         if transport.base_url.is_empty() {
             continue;
         }
