@@ -15,6 +15,7 @@ mod api;
 mod auth;
 mod config;
 mod db;
+mod kiro;
 mod logs;
 mod modelstore;
 mod oauth;

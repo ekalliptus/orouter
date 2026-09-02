@@ -54,14 +54,17 @@ impl AppState {
     /// Client for an optional proxy URL: the shared direct client when None,
     /// otherwise a cached client configured with that proxy.
     pub fn client_for(&self, proxy_url: Option<&str>) -> reqwest::Client {
+        Self::client_for_default(&self.client, proxy_url)
+    }
+
+    /// Static helper used by sibling modules (e.g. kiro) that already have
+    /// a base client and just need a per-proxy variant. Builds a fresh
+    /// client each call (no cache — typically one connection per call).
+    pub fn client_for_default(base: &reqwest::Client, proxy_url: Option<&str>) -> reqwest::Client {
+        let _ = base;
         let Some(url) = proxy_url.map(str::trim).filter(|s| !s.is_empty()) else {
-            return self.client.clone();
+            return reqwest::Client::new();
         };
-        if let Ok(map) = self.proxy_clients.lock() {
-            if let Some(c) = map.get(url) {
-                return c.clone();
-            }
-        }
         match reqwest::Proxy::all(url) {
             Ok(proxy) => match reqwest::Client::builder()
                 .pool_idle_timeout(Duration::from_secs(90))
@@ -70,20 +73,15 @@ impl AppState {
                 .proxy(proxy)
                 .build()
             {
-                Ok(c) => {
-                    if let Ok(mut map) = self.proxy_clients.lock() {
-                        map.insert(url.to_string(), c.clone());
-                    }
-                    c
-                }
+                Ok(c) => c,
                 Err(e) => {
-                    warn!(proxy = %url, "proxy client build failed: {e}");
-                    self.client.clone()
+                    tracing::warn!(proxy = %url, "proxy client build failed: {e}");
+                    reqwest::Client::new()
                 }
             },
             Err(e) => {
-                warn!(proxy = %url, "proxy config invalid: {e}");
-                self.client.clone()
+                tracing::warn!(proxy = %url, "proxy config invalid: {e}");
+                reqwest::Client::new()
             }
         }
     }
@@ -149,6 +147,14 @@ pub async fn chat_completions(
     // Disabled models (kv disabledModels) are skipped; custom models
     // (kv customModels) ride their provider's transport.
     let model = crate::modelstore::resolve_alias(&state.db, &model).await.unwrap_or(model);
+
+    // Kiro special-case: identifier is `kiro/<upstream-id>` where the upstream
+    // id is selected server-side (often `auto`). Handle BEFORE the generic
+    // resolve() so the snapshot doesn't have to know the upstream model.
+    if model.starts_with("kiro/") {
+        let upstream = model.trim_start_matches("kiro/").to_string();
+        return kiro_chat(state, headers, upstream, body).await;
+    }
 
     #[derive(Clone)]
     struct Target {
@@ -368,6 +374,122 @@ pub async fn chat_completions(
     Err(ChatError { status: StatusCode::NOT_FOUND, message: "model resolved but no credential attempted".into() })
 }
 
+/// Resolve the best Kiro connection and run the native chat pipeline.
+async fn kiro_chat(
+    state: AppState,
+    headers: HeaderMap,
+    upstream_model: String,
+    body: Bytes,
+) -> Result<Response, ChatError> {
+    use crate::kiro;
+
+    // Same inbound API-key gate as the OpenAI path.
+    if state.db.require_api_key().await {
+        let presented = extract_api_key(&headers);
+        match presented {
+            Some(k) if state.db.validate_api_key(&k).await => {}
+            _ => return Err(ChatError { status: StatusCode::UNAUTHORIZED, message: "Missing or invalid API key".into() }),
+        }
+    }
+
+    let mut payload: Value = serde_json::from_slice(&body).map_err(|_| ChatError {
+        status: StatusCode::BAD_REQUEST,
+        message: "Invalid JSON body".into(),
+    })?;
+    let messages = payload
+        .get("messages")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let system_prompt = payload
+        .get("system")
+        .and_then(|v| v.as_str())
+        .map(String::from)
+        .or_else(|| {
+            messages
+                .iter()
+                .find(|m| m.get("role").and_then(|v| v.as_str()) == Some("system"))
+                .and_then(|m| m.get("content").and_then(|v| v.as_str()))
+                .map(String::from)
+        });
+    let history = messages
+        .iter()
+        .rev()
+        .skip(1)
+        .rev()
+        .filter_map(|m| kiro::history_entry(m))
+        .collect::<Vec<_>>();
+    let current_user = messages
+        .last()
+        .and_then(|m| kiro::user_input_message(m))
+        .unwrap_or_else(|| json!({ "content": "" }));
+    let inference = payload
+        .get("max_tokens")
+        .or_else(|| payload.get("maxTokens"))
+        .map(|v| json!({ "maxTokens": v }));
+    let is_stream = payload
+        .get("stream")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    let conns = state.db.connections_for_provider("kiro", &upstream_model).await;
+    if conns.is_empty() {
+        return Ok(Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({ "error": { "type": "api_error", "message": "no active kiro connection — add one in Providers" } })
+                    .to_string(),
+            ))
+            .unwrap());
+    }
+
+    let mut last_err: Option<String> = None;
+    for conn in &conns {
+        let id = conn.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let proxy = state.db.resolve_connection_proxy(&id).await;
+        let http = state.client_for(proxy.as_deref());
+        // Auto-refresh OAuth tokens (best effort).
+        if conn.get("refreshToken").and_then(|v| v.as_str()).is_some_and(|s| !s.is_empty()) {
+            let _ = crate::oauth::refresh(&state.db, &http, &id).await;
+        }
+        let req = kiro::ChatRequest {
+            conversation_id: format!("9router-{}", uuid::Uuid::new_v4()),
+            profile_arn: String::new(), // filled by kiro::chat
+            upstream_model: upstream_model.clone(),
+            system_prompt: system_prompt.clone(),
+            history: history.clone(),
+            current_user: current_user.clone(),
+            inference: inference.clone(),
+            additional: None,
+        };
+        match kiro::chat(&state.db, &http, &id, &req, is_stream).await {
+            Ok((status, resp_headers, resp_body)) => {
+                state
+                    .db
+                    .save_request_detail(
+                        "kiro",
+                        &upstream_model,
+                        &id,
+                        &status.as_u16().to_string(),
+                        &json!({ "stream": is_stream, "upstreamModel": upstream_model }),
+                    )
+                    .await;
+                let mut resp = Response::builder().status(status);
+                if let Some(ct) = resp_headers.get("content-type") {
+                    resp = resp.header("content-type", ct);
+                }
+                return Ok(resp.body(resp_body).unwrap());
+            }
+            Err(e) => {
+                tracing::warn!(provider = "kiro", "chat attempt failed: {e}");
+                last_err = Some(e);
+            }
+        }
+    }
+    Err(ChatError { status: StatusCode::BAD_GATEWAY, message: last_err.unwrap_or_else(|| "kiro failed".to_string()) })
+}
+
 /// Forward a chat request to the Node upstream (for non-native models like
 /// Claude/Gemini/OAuth/combo). Node's open-sse translator handles format
 /// conversion, OAuth refresh, combo routing, etc.
@@ -425,6 +547,7 @@ async fn proxy_request_to_node(
 }
 
 /// POST /v1/embeddings — OpenAI embeddings passthrough for providers with a
+/// native transport: {base}/embeddings + the connection's API key.
 /// native transport: {base}/embeddings + the connection's API key.
 pub async fn embeddings(
     State(state): State<AppState>,
@@ -623,6 +746,8 @@ struct UsageCtx {
 pub fn extract_api_key_pub(headers: &HeaderMap) -> Option<String> {
     extract_api_key(headers)
 }
+
+pub mod kiro_sse;
 
 fn extract_api_key(headers: &HeaderMap) -> Option<String> {
     if let Some(auth) = headers.get("authorization").and_then(|v| v.to_str().ok()) {
