@@ -217,28 +217,42 @@ pub fn openai_model_list() -> serde_json::Value {
     serde_json::json!({ "object": "list", "data": data })
 }
 
-/// Rich catalog for the dashboard Models page (GET /api/models): every
-/// provider's models with kind, native flag, upstream mapping and $/Mtok
-/// pricing so the UI can build searchable tables without guessing.
+/// Dashboard catalog grouped by CANONICAL provider id (providerLookup
+/// target), merging model entries across aliased snapshot keys. Emits
+/// `tokens` so the UI can match connections either way.
 pub fn dashboard_model_catalog() -> serde_json::Value {
-    let mut order: Vec<String> = SNAPSHOT.provider_models_order.clone();
-    let mut keys: Vec<&String> = SNAPSHOT.provider_models.keys().collect();
-    keys.sort();
-    for k in keys {
-        if !order.iter().any(|o| o == k) {
-            order.push(k.clone());
+    // Map every snapshot key to its canonical provider id.
+    let mut canonical_of: HashMap<&String, &String> = HashMap::new();
+    for (token, canonical) in &SNAPSHOT.provider_lookup {
+        if SNAPSHOT.provider_models.contains_key(token) {
+            canonical_of.insert(token, canonical);
         }
     }
+    for key in SNAPSHOT.provider_models.keys() {
+        canonical_of.entry(key).or_insert(key);
+    }
+
+    // canonical → merged models (+ native transport + token list)
+    let mut merged: std::collections::BTreeMap<
+        String,
+        (Vec<&SnapModel>, bool, Vec<String>),
+    > = std::collections::BTreeMap::new();
+    for (token, models) in &SNAPSHOT.provider_models {
+        let canonical = canonical_of.get(token).map(|c| c.to_string()).unwrap_or_else(|| token.clone());
+        let entry = merged.entry(canonical).or_insert_with(|| (Vec::new(), false, Vec::new()));
+        entry.1 = entry.1 || SNAPSHOT.native_chat_transports.get(token).map(|t| !t.base_url.is_empty()).unwrap_or(false);
+        for m in models {
+            if !entry.0.iter().any(|x| x.id == m.id) {
+                entry.0.push(m);
+            }
+        }
+    }
+    for (_, tokens) in &mut merged {
+        tokens.2.sort();
+    }
+
     let mut providers_out: Vec<serde_json::Value> = Vec::new();
-    for provider in &order {
-        let Some(models) = SNAPSHOT.provider_models.get(provider) else {
-            continue;
-        };
-        let has_transport = SNAPSHOT
-            .native_chat_transports
-            .get(provider)
-            .map(|t| !t.base_url.is_empty())
-            .unwrap_or(false);
+    for (canonical, (models, has_transport, tokens)) in merged {
         let models_json: Vec<serde_json::Value> = models
             .iter()
             .map(|m| {
@@ -255,7 +269,8 @@ pub fn dashboard_model_catalog() -> serde_json::Value {
             })
             .collect();
         providers_out.push(serde_json::json!({
-            "provider": provider,
+            "provider": canonical,
+            "tokens": tokens,
             "hasNativeTransport": has_transport,
             "models": models_json,
         }));

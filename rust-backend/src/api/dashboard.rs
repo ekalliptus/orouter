@@ -212,8 +212,34 @@ pub async fn providers_test(State(state): State<AppState>, Path(id): Path<String
     let Some(conn) = state.db.get_connection_full(&id).await else {
         return error_response(StatusCode::NOT_FOUND, "Connection not found");
     };
-    let provider = conn.get("provider").and_then(|v| v.as_str()).unwrap_or("");
-    let api_key = conn.get("apiKey").and_then(|v| v.as_str()).unwrap_or("");
+    let provider = conn.get("provider").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let api_key = conn.get("apiKey").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let access_token = conn.get("accessToken").and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+    // OAuth-style connection (no api key, has access token): validate via the
+    // provider's native quota probe — same call the Quota Tracker uses.
+    if api_key.is_empty() && !access_token.is_empty() {
+        let http = state.client_for(state.db.resolve_connection_proxy(&id).await.as_deref());
+        let quota = crate::quota::fetch_quota(&state.db, &http, &conn).await;
+        let available = quota.get("available").and_then(|v| v.as_bool()).unwrap_or(false);
+        let error = quota
+            .get("error")
+            .or_else(|| quota.get("message"))
+            .and_then(|v| v.as_str())
+            .map(|s| Value::String(s.to_string()))
+            .unwrap_or(Value::Null);
+        let now = iso_now();
+        let _ = state.db.update_connection_safe(&id, json!({
+            "testStatus": if available { "active" } else { "error" },
+            "lastError": if available { Value::Null } else { error.clone() },
+            "lastErrorAt": if available { Value::Null } else { Value::String(now) },
+        })).await;
+        return (
+            StatusCode::OK,
+            Json(json!({ "valid": available, "error": if available { Value::Null } else { error }, "refreshed": false })),
+        ).into_response();
+    }
+
     if api_key.is_empty() {
         return error_response(StatusCode::BAD_REQUEST, "No API key on this connection");
     }
