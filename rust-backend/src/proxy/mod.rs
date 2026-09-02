@@ -173,17 +173,26 @@ pub async fn chat_completions(
     if model.contains('/') {
         match snapshot::resolve(&model) {
             Some(r) => {
-                if crate::modelstore::is_disabled(&state.db, &r.provider_id, &r.upstream_model).await {
-                    tracing::info!(provider = %r.provider_id, model = %r.upstream_model, "model disabled — skipping native path");
+                let primary_provider = r.provider_id.clone();
+                let primary_model = r.upstream_model.clone();
+                if crate::modelstore::is_disabled(&state.db, &primary_provider, &primary_model).await {
+                    tracing::info!(provider = %primary_provider, model = %primary_model, "model disabled — skipping native path");
                     if !state.node_upstream.is_empty() {
                         return proxy_request_to_node(state, headers, body).await;
                     }
                     return Err(ChatError {
                         status: StatusCode::NOT_FOUND,
-                        message: format!("model '{}' is disabled", r.upstream_model),
+                        message: format!("model '{}' is disabled", primary_model),
                     });
                 }
-                targets.push(Target { provider_id: r.provider_id, upstream_model: r.upstream_model, transport: r.transport });
+                targets.push(Target { provider_id: primary_provider.clone(), upstream_model: primary_model.clone(), transport: r.transport });
+                // Cross-provider fallback: other providers serving the SAME
+                // model id, tried after the primary (Node chatCore parity).
+                for r2 in snapshot::resolve_candidates(&primary_model) {
+                    if r2.provider_id != primary_provider {
+                        targets.push(Target { provider_id: r2.provider_id, upstream_model: r2.upstream_model, transport: r2.transport });
+                    }
+                }
             }
             None => {
                 // customModels: provider has no catalog transport, but the
