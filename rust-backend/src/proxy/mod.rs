@@ -18,7 +18,8 @@ use axum::{
 };
 use bytes::Bytes;
 use futures_util::StreamExt;
-use serde_json::Value;
+use once_cell::sync::Lazy;
+use serde_json::{json, Value};
 use tracing::{debug, warn};
 
 pub mod reverse;
@@ -141,12 +142,15 @@ pub async fn chat_completions(
     }
 
     // ---- Target resolution (Node chatCore parity) ----
+    // 0. alias                 → resolved through kv(modelAliases), max 3 hops
     // 1. "provider/model"      → single native target
     // 2. combo name (no slash) → ordered chain of "provider/model" targets
     // 3. bare model id         → every native provider serving that id
-    // Each target walks ALL its credentials in priority order before the next
-    // target is tried; the final upstream error is passed through verbatim
-    // when the chain is exhausted. Non-native models fall through to Node.
+    // Disabled models (kv disabledModels) are skipped; custom models
+    // (kv customModels) ride their provider's transport.
+    let model = crate::modelstore::resolve_alias(&state.db, &model).await.unwrap_or(model);
+
+    #[derive(Clone)]
     struct Target {
         provider_id: String,
         upstream_model: String,
@@ -162,10 +166,36 @@ pub async fn chat_completions(
 
     if model.contains('/') {
         match snapshot::resolve(&model) {
-            Some(r) => targets.push(Target { provider_id: r.provider_id, upstream_model: r.upstream_model, transport: r.transport }),
+            Some(r) => {
+                if crate::modelstore::is_disabled(&state.db, &r.provider_id, &r.upstream_model).await {
+                    tracing::info!(provider = %r.provider_id, model = %r.upstream_model, "model disabled — skipping native path");
+                    if !state.node_upstream.is_empty() {
+                        return proxy_request_to_node(state, headers, body).await;
+                    }
+                    return Err(ChatError {
+                        status: StatusCode::NOT_FOUND,
+                        message: format!("model '{}' is disabled", r.upstream_model),
+                    });
+                }
+                targets.push(Target { provider_id: r.provider_id, upstream_model: r.upstream_model, transport: r.transport });
+            }
             None => {
-                tracing::info!(model = %model, "non-native model, proxying to Node");
-                return proxy_request_to_node(state, headers, body).await;
+                // customModels: provider has no catalog transport, but the
+                // model may be registered for it — ride that provider's conn.
+                let (p, m) = model.split_once('/').unwrap_or(("", ""));
+                let custom = crate::modelstore::custom_all(&state.db).await;
+                if custom.get(&format!("{p}|{m}|llm")).is_some() {
+                    let transport = snapshot::resolve(&format!("{p}/__transport__")).map(|r| r.transport);
+                    if let Some(transport) = transport {
+                        if !crate::modelstore::is_disabled(&state.db, p, m).await {
+                            targets.push(Target { provider_id: p.to_string(), upstream_model: m.to_string(), transport });
+                        }
+                    }
+                }
+                if targets.is_empty() {
+                    tracing::info!(model = %model, "non-native model, proxying to Node");
+                    return proxy_request_to_node(state, headers, body).await;
+                }
             }
         }
     } else if let Some(chain) = combo_chains
@@ -175,22 +205,53 @@ pub async fn chat_completions(
         tracing::info!(combo = %model, entries = chain.len(), "combo resolved");
         for entry in chain {
             if let Some(r) = snapshot::resolve(&entry) {
-                targets.push(Target { provider_id: r.provider_id, upstream_model: r.upstream_model, transport: r.transport });
+                if !crate::modelstore::is_disabled(&state.db, &r.provider_id, &r.upstream_model).await {
+                    targets.push(Target { provider_id: r.provider_id, upstream_model: r.upstream_model, transport: r.transport });
+                }
             } else {
                 for r in snapshot::resolve_candidates(&entry) {
-                    targets.push(Target { provider_id: r.provider_id, upstream_model: r.upstream_model, transport: r.transport });
+                    if !crate::modelstore::is_disabled(&state.db, &r.provider_id, &r.upstream_model).await {
+                        targets.push(Target { provider_id: r.provider_id, upstream_model: r.upstream_model, transport: r.transport });
+                    }
                 }
             }
         }
     } else {
         for r in snapshot::resolve_candidates(&model) {
-            targets.push(Target { provider_id: r.provider_id, upstream_model: r.upstream_model, transport: r.transport });
+            if !crate::modelstore::is_disabled(&state.db, &r.provider_id, &r.upstream_model).await {
+                targets.push(Target { provider_id: r.provider_id, upstream_model: r.upstream_model, transport: r.transport });
+            }
         }
         if targets.is_empty() {
             tracing::info!(model = %model, "non-native model, proxying to Node");
             return proxy_request_to_node(state, headers, body).await;
         }
     }
+
+    // Strategy enforcement: combo round-robin rotates the chain start;
+    // providerStrategies[id]=round-robin rotates credential start.
+    let settings = state.db.get_settings_full().await;
+    let combo_strategy = settings.get("comboStrategy").and_then(|v| v.as_str()).unwrap_or("fallback").to_string();
+    if combo_strategy == "round-robin" && targets.len() > 1 {
+        static RR: Lazy<std::sync::Mutex<HashMap<String, usize>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+        if let Ok(mut map) = RR.lock() {
+            let start = map.entry(model.clone()).or_insert(0);
+            let rotated: Vec<Target> = targets
+                .iter()
+                .cycle()
+                .skip(*start % targets.len())
+                .take(targets.len())
+                .cloned()
+                .collect();
+            *start = (*start + 1) % targets.len();
+            targets = rotated;
+        }
+    }
+    let provider_rr = targets
+        .first()
+        .and_then(|t| settings.pointer("/providerStrategies").and_then(|ps| ps.get(&t.provider_id)).and_then(|s| s.as_str()))
+        .unwrap_or("")
+        .to_string();
 
     // Optional inbound API-key gate context.
     let inbound_api_key = extract_api_key(&headers);
@@ -205,9 +266,20 @@ pub async fn chat_completions(
     let mut had_credential = false;
 
     for target in &targets {
-        let credentials = state.db.pick_credentials_all(&target.provider_id, &model).await;
+        let mut credentials = state.db.pick_credentials_all(&target.provider_id, &model).await;
         if credentials.is_empty() {
             continue;
+        }
+        // Provider-level round-robin: rotate credential start each request.
+        if provider_rr == "round-robin" && credentials.len() > 1 {
+            static PRR: Lazy<std::sync::Mutex<HashMap<String, usize>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+            if let Ok(mut map) = PRR.lock() {
+                let start = map.entry(target.provider_id.clone()).or_insert(0);
+                let rotated: Vec<crate::db::Credential> =
+                    credentials.iter().cycle().skip(*start % credentials.len()).take(credentials.len()).cloned().collect();
+                *start = (*start + 1) % credentials.len();
+                credentials = rotated;
+            }
         }
         had_credential = true;
         for cred in credentials {
@@ -253,9 +325,27 @@ pub async fn chat_completions(
                 endpoint: "/v1/chat/completions".to_string(),
             };
             if is_stream {
-                return Ok(relay_sse(upstream, &payload_val, state.clone(), usage_ctx));
+                let resp = relay_sse(upstream, &payload_val, state.clone(), usage_ctx.clone());
+                // Observability: capture the request + stream outcome.
+                state.db.save_request_detail(
+                    &usage_ctx.provider,
+                    &usage_ctx.model,
+                    &usage_ctx.connection_id,
+                    "ok",
+                    &json!({ "request": payload_val, "stream": true }),
+                ).await;
+                return Ok(resp);
             }
-            return Ok(relay_json_async(upstream, state.clone(), usage_ctx).await);
+            let resp = relay_json_async(upstream, state.clone(), usage_ctx.clone()).await;
+            let status = resp.status().as_u16();
+            state.db.save_request_detail(
+                &usage_ctx.provider,
+                &usage_ctx.model,
+                &usage_ctx.connection_id,
+                &status.to_string(),
+                &json!({ "request": payload_val, "responseStatus": status }),
+            ).await;
+            return Ok(resp);
         }
     }
 
@@ -428,6 +518,7 @@ pub async fn embeddings(
 }
 
 /// Context threaded into the relays so they can persist usage after the request.
+#[derive(Clone)]
 struct UsageCtx {
     provider: String,
     model: String,

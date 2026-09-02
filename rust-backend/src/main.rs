@@ -16,6 +16,7 @@ mod auth;
 mod config;
 mod db;
 mod logs;
+mod modelstore;
 mod oauth;
 mod proxy;
 mod quota;
@@ -91,6 +92,30 @@ async fn main() {
         state.client.clone(),
     ));
 
+    // Retention: prune usage + request details older than the configured days.
+    {
+        let db = state.db.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(6 * 3600));
+            interval.tick().await;
+            loop {
+                interval.tick().await;
+                let days = db
+                    .get_settings_full()
+                    .await
+                    .get("usageHistoryRetentionDays")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(30);
+                if days > 0 {
+                    let (usage, details) = db.prune_history(days).await;
+                    if usage + details > 0 {
+                        tracing::info!(usage, details, "retention pruned rows older than {days}d");
+                    }
+                }
+            }
+        });
+    }
+
     // Public auth routes (login/status/logout) — NOT behind the session gate.
     // They share the same AppState because login reads settings + updates the
     // login limiter using the DB.
@@ -162,6 +187,36 @@ async fn main() {
             get(api::dashboard::console_logs_stream),
         )
         .route("/api/models", get(api::dashboard::models_catalog))
+        .route(
+            "/api/models/alias",
+            get(api::dashboard::model_alias_get)
+                .put(api::dashboard::model_alias_set)
+                .delete(api::dashboard::model_alias_delete),
+        )
+        .route(
+            "/api/models/custom",
+            get(api::dashboard::model_custom_get)
+                .post(api::dashboard::model_custom_post)
+                .delete(api::dashboard::model_custom_delete),
+        )
+        .route(
+            "/api/models/disabled",
+            get(api::dashboard::model_disabled_get)
+                .post(api::dashboard::model_disabled_post)
+                .delete(api::dashboard::model_disabled_delete),
+        )
+        .route(
+            "/api/usage/request-details",
+            get(api::dashboard::usage_request_details),
+        )
+        .route(
+            "/api/usage/request-logs",
+            get(api::dashboard::usage_request_logs),
+        )
+        .route(
+            "/api/providers/test-batch",
+            axum::routing::post(api::dashboard::providers_test_batch),
+        )
         .route("/api/oauth/providers", get(api::dashboard::oauth_providers))
         .route(
             "/api/oauth/:provider/start",

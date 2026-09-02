@@ -480,6 +480,176 @@ pub async fn translator_dumps_get(Path(name): Path<String>) -> Response {
     }
 }
 
+// ---- /api/models management (alias / custom / disabled) -------------------
+
+pub async fn model_alias_get(State(state): State<AppState>) -> impl IntoResponse {
+    (StatusCode::OK, Json(json!({ "aliases": crate::modelstore::aliases(&state.db).await })))
+}
+
+pub async fn model_alias_set(State(state): State<AppState>, Json(body): Json<Value>) -> Response {
+    let alias = body.get("alias").and_then(|v| v.as_str()).unwrap_or("");
+    let model = body.get("model").and_then(|v| v.as_str()).unwrap_or("");
+    match crate::modelstore::set_alias(&state.db, alias, model).await {
+        Ok(()) => (StatusCode::OK, Json(json!({ "success": true }))).into_response(),
+        Err(e) => error_response(StatusCode::BAD_REQUEST, &e.to_string()),
+    }
+}
+
+pub async fn model_alias_delete(State(state): State<AppState>, axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>) -> Response {
+    let Some(alias) = q.get("alias") else {
+        return error_response(StatusCode::BAD_REQUEST, "alias query param required");
+    };
+    crate::modelstore::remove_alias(&state.db, alias).await;
+    (StatusCode::OK, Json(json!({ "success": true }))).into_response()
+}
+
+pub async fn model_custom_get(State(state): State<AppState>) -> impl IntoResponse {
+    (StatusCode::OK, Json(json!({ "models": crate::modelstore::custom_all(&state.db).await })))
+}
+
+pub async fn model_custom_post(State(state): State<AppState>, Json(body): Json<Value>) -> Response {
+    let provider_alias = body.get("providerAlias").and_then(|v| v.as_str()).unwrap_or("");
+    let id = body.get("id").and_then(|v| v.as_str()).unwrap_or("");
+    let model_type = body.get("type").and_then(|v| v.as_str()).unwrap_or("llm");
+    match crate::modelstore::set_custom(&state.db, provider_alias, id, model_type, body.clone()).await {
+        Ok(()) => (StatusCode::CREATED, Json(json!({ "success": true }))).into_response(),
+        Err(e) => error_response(StatusCode::BAD_REQUEST, &e.to_string()),
+    }
+}
+
+pub async fn model_custom_delete(State(state): State<AppState>, axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>) -> Response {
+    let (Some(pa), Some(id)) = (q.get("providerAlias"), q.get("id")) else {
+        return error_response(StatusCode::BAD_REQUEST, "providerAlias and id required");
+    };
+    crate::modelstore::remove_custom(&state.db, pa, id, q.get("type").map(|s| s.as_str()).unwrap_or("llm"));
+    (StatusCode::OK, Json(json!({ "success": true }))).into_response()
+}
+
+pub async fn model_disabled_get(State(state): State<AppState>, axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>) -> impl IntoResponse {
+    match q.get("providerAlias") {
+        Some(pa) => (
+            StatusCode::OK,
+            Json(json!({ "ids": crate::modelstore::disabled_for(&state.db, pa).await })),
+        )
+            .into_response(),
+        None => (
+            StatusCode::OK,
+            Json(json!({ "disabled": crate::modelstore::disabled_all(&state.db).await })),
+        )
+            .into_response(),
+    }
+}
+
+pub async fn model_disabled_post(State(state): State<AppState>, Json(body): Json<Value>) -> Response {
+    let Some(pa) = body.get("providerAlias").and_then(|v| v.as_str()) else {
+        return error_response(StatusCode::BAD_REQUEST, "providerAlias required");
+    };
+    let Some(ids) = body.get("ids").and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect::<Vec<_>>()) else {
+        return error_response(StatusCode::BAD_REQUEST, "ids[] required");
+    };
+    crate::modelstore::disable_models(&state.db, pa, &ids).await;
+    (StatusCode::OK, Json(json!({ "success": true }))).into_response()
+}
+
+pub async fn model_disabled_delete(State(state): State<AppState>, axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>) -> Response {
+    let Some(pa) = q.get("providerAlias") else {
+        return error_response(StatusCode::BAD_REQUEST, "providerAlias required");
+    };
+    match q.get("id") {
+        Some(id) => crate::modelstore::enable_models(&state.db, pa, &[id.clone()]).await,
+        None => crate::modelstore::enable_all_for(&state.db, pa).await,
+    }
+    (StatusCode::OK, Json(json!({ "success": true }))).into_response()
+}
+
+// ---- /api/usage/request-details (observability) ---------------------------
+
+pub async fn usage_request_details(
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    let page = q.get("page").and_then(|v| v.parse().ok()).unwrap_or(1);
+    let page_size = q.get("pageSize").and_then(|v| v.parse().ok()).unwrap_or(20);
+    let rows = state.db.request_details(page, page_size, q.get("provider").map(|s| s.as_str())).await;
+    (StatusCode::OK, Json(json!({ "details": rows, "page": page, "pageSize": page_size })))
+}
+
+/// GET /api/usage/request-logs — compact log lines from requestDetails.
+pub async fn usage_request_logs(State(state): State<AppState>) -> impl IntoResponse {
+    let rows = state.db.request_details(1, 100, None).await;
+    let lines: Vec<String> = rows
+        .iter()
+        .map(|r| {
+            format!(
+                "{} | {} | {} | {} | {}",
+                r.get("timestamp").and_then(|v| v.as_str()).unwrap_or("?"),
+                r.get("provider").and_then(|v| v.as_str()).unwrap_or("-").to_uppercase(),
+                r.get("model").and_then(|v| v.as_str()).unwrap_or("-"),
+                r.get("connectionId").and_then(|v| v.as_str()).map(|s| s.get(..8).unwrap_or(s).to_string()).unwrap_or_default(),
+                r.get("status").and_then(|v| v.as_str()).unwrap_or("-"),
+            )
+        })
+        .collect();
+    (StatusCode::OK, Json(lines))
+}
+
+// ---- POST /api/providers/test-batch — server-side group test --------------
+
+pub async fn providers_test_batch(State(state): State<AppState>, Json(body): Json<Value>) -> Response {
+    let mode = body.get("mode").and_then(|v| v.as_str()).unwrap_or("all").to_string();
+    let conns = state.db.list_connections_safe().await;
+    let mut results: Vec<Value> = Vec::new();
+    for c in conns.iter().filter(|c| c.get("isActive").and_then(|v| v.as_bool()) != Some(false)) {
+        let is_oauth = c.get("authType").and_then(|v| v.as_str()) == Some("oauth");
+        let matches_mode = mode == "all"
+            || (mode == "oauth" && is_oauth)
+            || (mode == "apikey" && !is_oauth);
+        if !matches_mode {
+            continue;
+        }
+        let Some(id) = c.get("id").and_then(|v| v.as_str()) else { continue };
+        let t0 = std::time::Instant::now();
+        let ok = match state.db.get_connection_full(id).await {
+            Some(full) => {
+                let api_key = full.get("apiKey").and_then(|v| v.as_str()).unwrap_or("");
+                if api_key.is_empty() {
+                    false
+                } else {
+                    let provider = full.get("provider").and_then(|v| v.as_str()).unwrap_or("");
+                    let Some(r) = crate::snapshot::resolve(&format!("{provider}/__probe__")) else {
+                        continue;
+                    };
+                    let base = r.transport.base_url.trim_end_matches('/').trim_end_matches("/chat/completions").to_string();
+                    let http = state.client_for(state.db.resolve_connection_proxy(id).await.as_deref());
+                    match http
+                        .get(format!("{base}/models"))
+                        .header("authorization", format!("Bearer {api_key}"))
+                        .timeout(std::time::Duration::from_secs(15))
+                        .send()
+                        .await
+                    {
+                        Ok(resp) => resp.status().is_success(),
+                        Err(_) => false,
+                    }
+                }
+            }
+            None => false,
+        };
+        results.push(json!({
+            "connectionId": id,
+            "connectionName": c.get("name").cloned().unwrap_or(json!("?")),
+            "provider": c.get("provider").cloned().unwrap_or(json!("?")),
+            "ok": ok,
+            "latencyMs": t0.elapsed().as_millis() as u64,
+        }));
+    }
+    (
+        StatusCode::OK,
+        Json(json!({ "mode": mode, "results": results })),
+    )
+        .into_response()
+}
+
 // ---- /api/usage (M7) -----------------------------------------------------
 
 // ---- /api/proxy-pools -----------------------------------------------------

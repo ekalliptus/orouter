@@ -9,7 +9,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use rusqlite::{Connection, OptionalExtension};
-use serde_json::Value;
+use serde_json::{json, Value};
 use tokio::sync::Mutex;
 
 /// Wrapper holding a pooled connection + write mutex (matches Go's
@@ -203,6 +203,189 @@ impl Db {
         })
         .await
         .unwrap_or_default()
+    }
+
+    // ---- KV store (Node parity: src/lib/db/helpers/kvStore.js) ------------
+
+    pub async fn kv_get_all(&self, scope: &str) -> Value {
+        let conn = self.inner.clone();
+        let scope = scope.to_string();
+        tokio::task::spawn_blocking(move || -> Value {
+            let conn = conn.blocking_lock();
+            let Ok(mut stmt) = conn.prepare("SELECT key, value FROM kv WHERE scope = ?1") else {
+                return Value::Object(Default::default());
+            };
+            let rows = stmt
+                .query_map([&scope], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+                .ok()
+                .into_iter()
+                .flatten()
+                .filter_map(Result::ok);
+            let mut out = serde_json::Map::new();
+            for (key, value) in rows {
+                out.insert(key, serde_json::from_str(&value).unwrap_or(Value::Null));
+            }
+            Value::Object(out)
+        })
+        .await
+        .unwrap_or_else(|_| Value::Object(Default::default()))
+    }
+
+    pub async fn kv_get_array(&self, scope: &str, key: &str) -> Vec<String> {
+        let conn = self.inner.clone();
+        let scope = scope.to_string();
+        let key = key.to_string();
+        tokio::task::spawn_blocking(move || -> Vec<String> {
+            let conn = conn.blocking_lock();
+            let Ok(row) = conn.query_row(
+                "SELECT value FROM kv WHERE scope = ?1 AND key = ?2",
+                rusqlite::params![scope, key],
+                |r| r.get::<_, String>(0),
+            ) else {
+                return Vec::new();
+            };
+            serde_json::from_str::<Value>(&row)
+                .ok()
+                .and_then(|v| v.as_array().cloned())
+                .map(|arr| arr.into_iter().filter_map(|x| x.as_str().map(String::from)).collect())
+                .unwrap_or_default()
+        })
+        .await
+        .unwrap_or_default()
+    }
+
+    pub async fn kv_set(&self, scope: &str, key: &str, value: &Value) -> anyhow::Result<()> {
+        let conn = self.inner.clone();
+        let scope = scope.to_string();
+        let key = key.to_string();
+        let value = serde_json::to_string(value)?;
+        tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+            let conn = conn.blocking_lock();
+            conn.execute(
+                "INSERT INTO kv(scope, key, value) VALUES(?1, ?2, ?3)
+                 ON CONFLICT(scope, key) DO UPDATE SET value = excluded.value",
+                rusqlite::params![scope, key, value],
+            )?;
+            Ok(())
+        })
+        .await??;
+        Ok(())
+    }
+
+    pub async fn kv_remove(&self, scope: &str, key: &str) {
+        let conn = self.inner.clone();
+        let scope = scope.to_string();
+        let key = key.to_string();
+        let _ = tokio::task::spawn_blocking(move || {
+            let conn = conn.blocking_lock();
+            conn.execute("DELETE FROM kv WHERE scope = ?1 AND key = ?2", rusqlite::params![scope, key])
+        })
+        .await;
+    }
+
+    /// Persist one request-detail row (observability, requestDetails table).
+    pub async fn save_request_detail(
+        &self,
+        provider: &str,
+        model: &str,
+        connection_id: &str,
+        status: &str,
+        data: &Value,
+    ) {
+        let conn = self.inner.clone();
+        let provider = provider.to_string();
+        let model = model.to_string();
+        let connection_id = connection_id.to_string();
+        let status = status.to_string();
+        let data = match serde_json::to_string(data) {
+            Ok(d) => d,
+            Err(_) => return,
+        };
+        let _ = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+            let conn = conn.blocking_lock();
+            conn.execute(
+                "INSERT OR IGNORE INTO requestDetails(id, timestamp, provider, model, connectionId, status, data)
+                 VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                rusqlite::params![uuid::Uuid::new_v4().to_string(), now_iso8601(), provider, model, connection_id, status, data],
+            )?;
+            Ok(())
+        })
+        .await;
+    }
+
+    /// Request-detail rows (newest first) + total count. data parsed to JSON.
+    pub async fn request_details(
+        &self,
+        page: usize,
+        page_size: usize,
+        provider: Option<&str>,
+    ) -> Vec<Value> {
+        let conn = self.inner.clone();
+        let provider = provider.map(String::from);
+        let offset = (page.saturating_sub(1)) * page_size;
+        tokio::task::spawn_blocking(move || -> Vec<Value> {
+            let conn = conn.blocking_lock();
+            let (sql, params): (&str, Vec<Box<dyn rusqlite::ToSql>>) = match &provider {
+                Some(p) => (
+                    "SELECT id, timestamp, provider, model, connectionId, status, data FROM requestDetails WHERE provider = ?1 ORDER BY timestamp DESC LIMIT ?2 OFFSET ?3",
+                    vec![Box::new(p.clone()), Box::new(page_size as i64), Box::new(offset as i64)],
+                ),
+                None => (
+                    "SELECT id, timestamp, provider, model, connectionId, status, data FROM requestDetails ORDER BY timestamp DESC LIMIT ?1 OFFSET ?2",
+                    vec![Box::new(page_size as i64), Box::new(offset as i64)],
+                ),
+            };
+            let Ok(mut stmt) = conn.prepare(sql) else { return Vec::new() };
+            let refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+            let rows = stmt
+                .query_map(refs.as_slice(), |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, Option<String>>(2)?,
+                        r.get::<_, Option<String>>(3)?,
+                        r.get::<_, Option<String>>(4)?,
+                        r.get::<_, Option<String>>(5)?,
+                        r.get::<_, String>(6)?,
+                    ))
+                })
+                .ok()
+                .into_iter()
+                .flatten()
+                .filter_map(Result::ok);
+            rows.map(|(id, timestamp, provider, model, connection_id, status, data)| {
+                json!({
+                    "id": id,
+                    "timestamp": timestamp,
+                    "provider": provider,
+                    "model": model,
+                    "connectionId": connection_id,
+                    "status": status,
+                    "data": serde_json::from_str::<Value>(&data).unwrap_or(Value::Null),
+                })
+            })
+            .collect()
+        })
+        .await
+        .unwrap_or_default()
+    }
+
+    /// Delete usage + request-detail rows older than `days` (retention job).
+    pub async fn prune_history(&self, days: i64) -> (usize, usize) {
+        let conn = self.inner.clone();
+        tokio::task::spawn_blocking(move || -> (usize, usize) {
+            let conn = conn.blocking_lock();
+            let cutoff = iso_from_secs((chrono_now_secs() - days * 86400).max(0));
+            let a = conn
+                .execute("DELETE FROM usageHistory WHERE timestamp < ?1", rusqlite::params![cutoff])
+                .unwrap_or(0);
+            let b = conn
+                .execute("DELETE FROM requestDetails WHERE timestamp < ?1", rusqlite::params![cutoff])
+                .unwrap_or(0);
+            (a, b)
+        })
+        .await
+        .unwrap_or((0, 0))
     }
 
     /// Combos (name → ordered model chain) for chat resolution + /v1/models.
