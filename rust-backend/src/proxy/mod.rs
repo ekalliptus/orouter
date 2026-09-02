@@ -140,87 +140,142 @@ pub async fn chat_completions(
         }
     }
 
-    // Try to resolve natively. If the model isn't a native OpenAI-format
-    // provider (Claude, Gemini, OAuth, combo, etc.), fall through to Node
-    // which can handle it via the open-sse translator.
-    let resolved = match snapshot::resolve(&model) {
-        Some(r) => r,
-        None => {
+    // ---- Target resolution (Node chatCore parity) ----
+    // 1. "provider/model"      → single native target
+    // 2. combo name (no slash) → ordered chain of "provider/model" targets
+    // 3. bare model id         → every native provider serving that id
+    // Each target walks ALL its credentials in priority order before the next
+    // target is tried; the final upstream error is passed through verbatim
+    // when the chain is exhausted. Non-native models fall through to Node.
+    struct Target {
+        provider_id: String,
+        upstream_model: String,
+        transport: snapshot::NativeChatTransport,
+    }
+    let mut targets: Vec<Target> = Vec::new();
+
+    let combo_chains = if model.contains('/') {
+        None
+    } else {
+        Some(state.db.combo_chains().await)
+    };
+
+    if model.contains('/') {
+        match snapshot::resolve(&model) {
+            Some(r) => targets.push(Target { provider_id: r.provider_id, upstream_model: r.upstream_model, transport: r.transport }),
+            None => {
+                tracing::info!(model = %model, "non-native model, proxying to Node");
+                return proxy_request_to_node(state, headers, body).await;
+            }
+        }
+    } else if let Some(chain) = combo_chains
+        .as_ref()
+        .and_then(|chains| chains.iter().find(|(name, _)| name == &model).map(|(_, m)| m.clone()))
+    {
+        tracing::info!(combo = %model, entries = chain.len(), "combo resolved");
+        for entry in chain {
+            if let Some(r) = snapshot::resolve(&entry) {
+                targets.push(Target { provider_id: r.provider_id, upstream_model: r.upstream_model, transport: r.transport });
+            } else {
+                for r in snapshot::resolve_candidates(&entry) {
+                    targets.push(Target { provider_id: r.provider_id, upstream_model: r.upstream_model, transport: r.transport });
+                }
+            }
+        }
+    } else {
+        for r in snapshot::resolve_candidates(&model) {
+            targets.push(Target { provider_id: r.provider_id, upstream_model: r.upstream_model, transport: r.transport });
+        }
+        if targets.is_empty() {
             tracing::info!(model = %model, "non-native model, proxying to Node");
             return proxy_request_to_node(state, headers, body).await;
         }
-    };
-
-    // Pick ONE credential up front. If none found natively (e.g. OAuth-only
-    // connections), fall through to Node which has the full credential picker.
-    let cred = match state
-        .db
-        .pick_credential(&resolved.provider_id, &model)
-        .await
-    {
-        Some(c) => c,
-        None => {
-            tracing::info!(provider = %resolved.provider_id, "no native credential, proxying to Node");
-            return proxy_request_to_node(state, headers, body).await;
-        }
-    };
-
-    // Overwrite model with the upstream id (Go: out["model"] = upstream).
-    if let Some(obj) = payload.as_object_mut() {
-        obj.insert(
-            "model".into(),
-            Value::String(resolved.upstream_model.clone()),
-        );
     }
-    let payload_bytes = serde_json::to_vec(&payload).map_err(|_| ChatError {
-        status: StatusCode::INTERNAL_SERVER_ERROR,
-        message: "encode upstream request".into(),
-    })?;
+
+    // Optional inbound API-key gate context.
+    let inbound_api_key = extract_api_key(&headers);
 
     let is_stream = payload
         .get("stream")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
-    let inbound_api_key = extract_api_key(&headers);
 
-    // Resolve the connection's proxy directive (per-connection URL or pool),
-    // mirroring chatCore.js. None = direct connection.
-    let proxy_url = state.db.resolve_connection_proxy(&cred.connection_id).await;
-    if let Some(ref p) = proxy_url {
-        tracing::info!(proxy = %p, provider = %resolved.provider_id, "routing upstream via proxy");
+    let mut last_error: Option<ChatError> = None;
+    let mut last_upstream_error: Option<(StatusCode, Vec<u8>, String)> = None;
+    let mut had_credential = false;
+
+    for target in &targets {
+        let credentials = state.db.pick_credentials_all(&target.provider_id, &model).await;
+        if credentials.is_empty() {
+            continue;
+        }
+        had_credential = true;
+        for cred in credentials {
+            let mut payload_val = payload.clone();
+            if let Some(obj) = payload_val.as_object_mut() {
+                obj.insert("model".into(), Value::String(target.upstream_model.clone()));
+            }
+            let payload_bytes = match serde_json::to_vec(&payload_val) {
+                Ok(b) => b,
+                Err(_) => continue,
+            };
+
+            let proxy_url = state.db.resolve_connection_proxy(&cred.connection_id).await;
+            let http = state.client_for(proxy_url.as_deref());
+
+            let upstream = match execute_upstream(&http, &target.transport, cred.secret.clone(), payload_bytes, is_stream).await {
+                Ok(u) => u,
+                Err(e) => {
+                    debug!(provider = %target.provider_id, "upstream attempt failed: {}", e.message);
+                    last_error = Some(e);
+                    continue;
+                }
+            };
+
+            if !upstream.status().is_success() {
+                let status = upstream.status();
+                let ct = upstream
+                    .headers()
+                    .get("content-type")
+                    .cloned()
+                    .unwrap_or_else(|| HeaderValue::from_static("application/json"));
+                let body_bytes = upstream.bytes().await.unwrap_or_default().to_vec();
+                last_upstream_error = Some((status, body_bytes, ct.to_str().unwrap_or("application/json").to_string()));
+                last_error = Some(ChatError { status: StatusCode::BAD_GATEWAY, message: format!("upstream HTTP {}", status.as_u16()) });
+                continue;
+            }
+
+            let usage_ctx = UsageCtx {
+                provider: target.provider_id.clone(),
+                model: model.clone(),
+                connection_id: cred.connection_id.clone(),
+                api_key: inbound_api_key.clone().unwrap_or_default(),
+                endpoint: "/v1/chat/completions".to_string(),
+            };
+            if is_stream {
+                return Ok(relay_sse(upstream, &payload_val, state.clone(), usage_ctx));
+            }
+            return Ok(relay_json_async(upstream, state.clone(), usage_ctx).await);
+        }
     }
-    let http = state.client_for(proxy_url.as_deref());
 
-    let upstream = execute_upstream(
-        &http,
-        &resolved,
-        cred.secret.clone(),
-        payload_bytes,
-        is_stream,
-    )
-    .await?;
-
-    // Upstream rejected the request (401/429/5xx…): pass status + body through
-    // instead of masking it as a 200 SSE stream that only emits [DONE].
-    if !upstream.status().is_success() {
-        return Ok(relay_upstream_error(upstream).await);
+    if let Some((status, body, ct)) = last_upstream_error {
+        // Pass the final upstream rejection through verbatim.
+        return Ok(Response::builder()
+            .status(status)
+            .header("content-type", ct)
+            .body(Body::from(body))
+            .unwrap());
     }
-
-    // Context for usage logging (M7). The SSE relay logs after the stream ends;
-    // the JSON path logs from the handler.
-    let usage_ctx = UsageCtx {
-        provider: resolved.provider_id.clone(),
-        model: model.clone(),
-        connection_id: cred.connection_id.clone(),
-        api_key: inbound_api_key.unwrap_or_default(),
-        endpoint: "/v1/chat/completions".to_string(),
-    };
-
-    if is_stream {
-        Ok(relay_sse(upstream, &payload, state.clone(), usage_ctx))
-    } else {
-        Ok(relay_json_async(upstream, state.clone(), usage_ctx).await)
+    if !had_credential {
+        // No native credential anywhere in the chain → Node owns this model.
+        return proxy_request_to_node(state, headers, body).await;
     }
+    if let Some(err) = last_error {
+        tracing::warn!(model = %model, "all native attempts failed: {}", err.message);
+        return Err(err);
+    }
+    Err(ChatError { status: StatusCode::NOT_FOUND, message: "model resolved but no credential attempted".into() })
 }
 
 /// Forward a chat request to the Node upstream (for non-native models like
@@ -279,6 +334,99 @@ async fn proxy_request_to_node(
     Ok(resp)
 }
 
+/// POST /v1/embeddings — OpenAI embeddings passthrough for providers with a
+/// native transport: {base}/embeddings + the connection's API key.
+pub async fn embeddings(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ChatError> {
+    let state = state;
+    let payload: Value = serde_json::from_slice(&body).map_err(|_| ChatError {
+        status: StatusCode::BAD_REQUEST,
+        message: "Invalid JSON body".into(),
+    })?;
+    let model = payload
+        .get("model")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    if model.is_empty() {
+        return Err(ChatError { status: StatusCode::BAD_REQUEST, message: "Missing model".into() });
+    }
+    if state.db.require_api_key().await {
+        let presented = extract_api_key(&headers);
+        match presented {
+            Some(k) if state.db.validate_api_key(&k).await => {}
+            _ => return Err(ChatError { status: StatusCode::UNAUTHORIZED, message: "Missing or invalid API key".into() }),
+        }
+    }
+
+    let (provider_id, upstream_model) = match model.split_once('/') {
+        Some((p, m)) => (p.to_string(), m.to_string()),
+        None => {
+            let cand = snapshot::resolve_candidates(&model);
+            if cand.is_empty() {
+                return Err(ChatError { status: StatusCode::NOT_FOUND, message: format!("no native provider serves model '{model}'") });
+            }
+            (cand[0].provider_id.clone(), cand[0].upstream_model.clone())
+        }
+    };
+
+    let credentials = state.db.pick_credentials_all(&provider_id, &model).await;
+    if credentials.is_empty() {
+        return proxy_request_to_node(state.clone(), headers, Bytes::from(body)).await;
+    }
+
+    let transport = snapshot::resolve(&format!("{provider_id}/x")).map(|r| r.transport);
+    let Some(transport) = transport else {
+        return Err(ChatError { status: StatusCode::NOT_FOUND, message: format!("provider '{provider_id}' has no native transport") });
+    };
+    let base = transport
+        .base_url
+        .trim_end_matches('/')
+        .trim_end_matches("/chat/completions")
+        .to_string();
+
+    let mut payload_val = payload.clone();
+    if let Some(obj) = payload_val.as_object_mut() {
+        obj.insert("model".into(), Value::String(upstream_model));
+    }
+    let payload_bytes = serde_json::to_vec(&payload_val).unwrap_or_default();
+
+    let mut last: Option<ChatError> = None;
+    for cred in &credentials {
+        let proxy_url = state.db.resolve_connection_proxy(&cred.connection_id).await;
+        let http = state.client_for(proxy_url.as_deref());
+        let resp = http
+            .post(format!("{base}/embeddings"))
+            .header("authorization", format!("Bearer {}", cred.secret))
+            .header("content-type", "application/json")
+            .body(payload_bytes.clone())
+            .timeout(Duration::from_secs(60))
+            .send()
+            .await;
+        match resp {
+            Ok(r) => {
+                let status = r.status();
+                let ct = r.headers().get("content-type").cloned().unwrap_or_else(|| HeaderValue::from_static("application/json"));
+                let bytes = r.bytes().await.unwrap_or_default();
+                if status.is_success() {
+                    return Ok(Response::builder()
+                        .status(StatusCode::OK)
+                        .header("content-type", ct)
+                        .body(Body::from(bytes))
+                        .unwrap());
+                }
+                last = Some(ChatError { status: StatusCode::BAD_GATEWAY, message: format!("embeddings HTTP {}", status.as_u16()) });
+                let _ = bytes;
+            }
+            Err(e) => last = Some(ChatError { status: StatusCode::BAD_GATEWAY, message: format!("embeddings fetch: {e}") }),
+        }
+    }
+    Err(last.unwrap_or(ChatError { status: StatusCode::BAD_GATEWAY, message: "embeddings failed".into() }))
+}
+
 /// Context threaded into the relays so they can persist usage after the request.
 struct UsageCtx {
     provider: String,
@@ -290,6 +438,10 @@ struct UsageCtx {
 
 /// Extract inbound API key from Authorization: Bearer or x-api-key
 /// (mirrors src/sse/services/auth.js extractApiKey).
+pub fn extract_api_key_pub(headers: &HeaderMap) -> Option<String> {
+    extract_api_key(headers)
+}
+
 fn extract_api_key(headers: &HeaderMap) -> Option<String> {
     if let Some(auth) = headers.get("authorization").and_then(|v| v.to_str().ok()) {
         if let Some(token) = auth.strip_prefix("Bearer ") {
@@ -307,12 +459,11 @@ fn extract_api_key(headers: &HeaderMap) -> Option<String> {
 /// (502×3, 503×3, 504×2, network×3 — chat_transport.go:63-113).
 async fn execute_upstream(
     http: &reqwest::Client,
-    resolved: &snapshot::ResolvedModel,
+    transport: &snapshot::NativeChatTransport,
     secret: String,
     payload: Vec<u8>,
     is_stream: bool,
 ) -> Result<reqwest::Response, ChatError> {
-    let transport = &resolved.transport;
     let mut attempts_502 = 3u32;
     let mut attempts_503 = 3u32;
     let mut attempts_504 = 2u32;

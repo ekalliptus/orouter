@@ -10,6 +10,7 @@
 //! replaces the Go native slice and will grow the remaining /api/* surface in
 //! later milestones. See PLAN.md / the conversation for the milestone map.
 
+mod anthropic;
 mod api;
 mod auth;
 mod config;
@@ -215,6 +216,9 @@ async fn main() {
             .route("/health", get(api::health))
             .route("/v1/models", get(api::models))
             .route("/v1/chat/completions", post(proxy::chat_completions))
+            .route("/v1/messages", post(anthropic::messages))
+            .route("/v1/messages/count_tokens", post(anthropic::count_tokens))
+            .route("/v1/embeddings", post(proxy::embeddings))
             .fallback(proxy::reverse::proxy_to_node)
             .layer(RequestBodyLimitLayer::new(cfg.body_max_bytes))
             .layer(CorsLayer::very_permissive())
@@ -228,6 +232,9 @@ async fn main() {
             .route("/health", get(api::health))
             .route("/v1/models", get(api::models))
             .route("/v1/chat/completions", post(proxy::chat_completions))
+            .route("/v1/messages", post(anthropic::messages))
+            .route("/v1/messages/count_tokens", post(anthropic::count_tokens))
+            .route("/v1/embeddings", post(proxy::embeddings))
             .merge(auth_routes)
             .merge(dashboard_routes)
             .merge(backend_not_found)

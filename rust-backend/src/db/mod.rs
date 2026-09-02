@@ -114,6 +114,122 @@ impl Db {
         })
     }
 
+    /// ALL usable credentials for a provider in priority order (chat fallback
+    /// walks this list when an upstream attempt fails). Skips OAuth rows the
+    /// same way pick_credential does, plus model-locked rows.
+    pub async fn pick_credentials_all(&self, provider: &str, model: &str) -> Vec<Credential> {
+        let conn = self.inner.clone();
+        let provider = provider.to_string();
+        let model = model.to_string();
+        tokio::task::spawn_blocking(move || -> Vec<Credential> {
+            let conn = conn.blocking_lock();
+            let Ok(mut stmt) = conn.prepare(
+                "SELECT id, data FROM providerConnections WHERE provider = ?1 AND isActive = 1 ORDER BY priority ASC",
+            ) else {
+                return Vec::new();
+            };
+            let rows: Vec<(String, String)> = stmt
+                .query_map([&provider], |r| {
+                    Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+                })
+                .ok()
+                .into_iter()
+                .flatten()
+                .filter_map(Result::ok)
+                .collect();
+            drop(stmt);
+            let mut out = Vec::new();
+            for (connection_id, data_json) in rows {
+                let Ok(data) = serde_json::from_str::<Value>(&data_json) else { continue };
+                let Some(obj) = data.as_object() else { continue };
+                if obj.get("refreshToken").and_then(|v| v.as_str()).is_some_and(|s| !s.is_empty())
+                    || obj.get("expiresAt").and_then(|v| v.as_str()).is_some()
+                {
+                    continue;
+                }
+                if is_model_locked(obj, &model) {
+                    continue;
+                }
+                if let Some(secret) = obj
+                    .get("apiKey")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                    .or_else(|| obj.get("accessToken").and_then(|v| v.as_str()).filter(|s| !s.is_empty()))
+                {
+                    out.push(Credential { secret: secret.to_string(), connection_id });
+                }
+            }
+            out
+        })
+        .await
+        .unwrap_or_default()
+    }
+
+    /// ALL active connections for a provider (full rows, priority order,
+    /// model-locked rows filtered) — used by the /v1/messages anthropic path
+    /// which needs OAuth rows too (unlike pick_credentials_all).
+    pub async fn connections_for_provider(&self, provider: &str, model: &str) -> Vec<Value> {
+        let conn = self.inner.clone();
+        let provider = provider.to_string();
+        let model = model.to_string();
+        tokio::task::spawn_blocking(move || -> Vec<Value> {
+            let conn = conn.blocking_lock();
+            let Ok(mut stmt) = conn.prepare(
+                "SELECT id, data FROM providerConnections WHERE provider = ?1 AND isActive = 1 ORDER BY priority ASC",
+            ) else {
+                return Vec::new();
+            };
+            let rows: Vec<(String, String)> = stmt
+                .query_map([&provider], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+                .ok()
+                .into_iter()
+                .flatten()
+                .filter_map(Result::ok)
+                .collect();
+            drop(stmt);
+            rows.iter()
+                .filter_map(|(id, data)| {
+                    let mut obj: Value = serde_json::from_str(data).ok()?;
+                    let o = obj.as_object_mut()?;
+                    o.insert("id".into(), Value::String(id.clone()));
+                    o.insert("provider".into(), Value::String(provider.clone()));
+                    if !is_model_locked(o, &model) {
+                        Some(obj)
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        })
+        .await
+        .unwrap_or_default()
+    }
+
+    /// Combos (name → ordered model chain) for chat resolution + /v1/models.
+    pub async fn combo_chains(&self) -> Vec<(String, Vec<String>)> {
+        let conn = self.inner.clone();
+        tokio::task::spawn_blocking(move || -> Vec<(String, Vec<String>)> {
+            let conn = conn.blocking_lock();
+            let Ok(mut stmt) = conn.prepare("SELECT name, models FROM combos") else {
+                return Vec::new();
+            };
+            let rows = stmt
+                .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+                .ok()
+                .into_iter()
+                .flatten()
+                .filter_map(Result::ok);
+            rows.filter_map(|(name, models_json)| {
+                let models: Value = serde_json::from_str(&models_json).ok()?;
+                let list = models.as_array()?.iter().filter_map(|m| m.as_str().map(String::from)).collect();
+                Some((name, list))
+            })
+            .collect()
+        })
+        .await
+        .unwrap_or_default()
+    }
+
     /// Read a single active credential blob for a provider, picking fill-first
     /// by priority. Returns the parsed `data` JSON for the first safe row, or
     /// None. "Safe" mirrors Go's nativeConnectionSafe: skip OAuth rows

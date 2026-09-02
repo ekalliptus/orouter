@@ -134,6 +134,40 @@ pub fn resolve(model: &str) -> Option<ResolvedModel> {
     })
 }
 
+/// Resolve ALL providers that natively serve `model_id` (bare id without a
+/// provider prefix, e.g. "glm-5.2"). Ordered by the snapshot's provider
+/// order so the chat fallback tries the most canonical provider first.
+/// Only providers that actually list the id as a native-chat llm are
+/// returned — unknown ids yield an empty vec.
+pub fn resolve_candidates(model_id: &str) -> Vec<ResolvedModel> {
+    let mut out: Vec<ResolvedModel> = Vec::new();
+    let mut order: Vec<&String> = SNAPSHOT.provider_models_order.iter().collect();
+    let mut keys: Vec<&String> = SNAPSHOT.provider_models.keys().collect();
+    keys.sort();
+    for k in keys {
+        if !order.iter().any(|o| **o == *k) {
+            order.push(k);
+        }
+    }
+    for provider in order.iter().map(|s| s.as_str()) {
+        let Some(models) = SNAPSHOT.provider_models.get(provider) else { continue };
+        let Some(m) = models.iter().find(|m| m.id == model_id && m.kind == "llm") else { continue };
+        if m.native_chat == Some(false) {
+            continue;
+        }
+        let Some(transport) = SNAPSHOT.native_chat_transports.get(provider).cloned() else { continue };
+        if transport.base_url.is_empty() {
+            continue;
+        }
+        out.push(ResolvedModel {
+            provider_id: provider.to_string(),
+            upstream_model: if m.upstream_id.is_empty() { m.id.clone() } else { m.upstream_id.clone() },
+            transport,
+        });
+    }
+    out
+}
+
 /// Public catalog for GET /v1/models. Returns the OpenAI-compatible model list
 /// (id + owned_by) built from the embedded snapshot — same shape the Go handler
 /// serves for the static-only case.

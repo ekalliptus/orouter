@@ -4,10 +4,12 @@
 
 pub mod dashboard;
 
-use axum::{http::StatusCode, response::IntoResponse};
+use axum::{extract::State, http::StatusCode, response::IntoResponse};
 use once_cell::sync::Lazy;
 use serde_json::json;
 use std::time::Instant;
+
+use crate::proxy::AppState;
 
 static STARTED_AT: Lazy<Instant> = Lazy::new(Instant::now);
 
@@ -24,9 +26,21 @@ pub async fn health() -> impl IntoResponse {
 }
 
 /// GET /v1/models — static OpenAI-compatible catalog from the embedded snapshot
-/// (models.go native path). No connection/secret data is exposed.
-pub async fn models() -> impl IntoResponse {
-    let body = crate::snapshot::openai_model_list();
+/// plus combo names (clients can call a combo like any model). No secrets.
+pub async fn models(State(state): State<AppState>) -> impl IntoResponse {
+    let mut body = crate::snapshot::openai_model_list();
+    if let Some(arr) = body
+        .get_mut("data")
+        .and_then(|v| v.as_array_mut())
+    {
+        for (name, _models) in state.db.combo_chains().await {
+            arr.push(json!({
+                "id": name,
+                "object": "model",
+                "owned_by": "combo",
+            }));
+        }
+    }
     (StatusCode::OK, axum::Json(body))
 }
 
