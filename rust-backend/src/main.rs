@@ -15,6 +15,7 @@ mod auth;
 mod config;
 mod db;
 mod logs;
+mod oauth;
 mod proxy;
 mod snapshot;
 
@@ -149,6 +150,19 @@ async fn main() {
             get(api::dashboard::console_logs_stream),
         )
         .route("/api/models", get(api::dashboard::models_catalog))
+        .route("/api/oauth/providers", get(api::dashboard::oauth_providers))
+        .route(
+            "/api/oauth/:provider/start",
+            axum::routing::post(api::dashboard::oauth_start),
+        )
+        .route(
+            "/api/oauth/:provider/exchange",
+            axum::routing::post(api::dashboard::oauth_exchange),
+        )
+        .route(
+            "/api/oauth/:provider/refresh",
+            axum::routing::post(api::dashboard::oauth_refresh),
+        )
         .route(
             "/api/version/shutdown",
             axum::routing::post(api::shutdown),

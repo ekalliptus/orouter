@@ -811,6 +811,104 @@ impl Db {
         .unwrap_or(false)
     }
 
+    /// Create an OAuth connection row (authType "oauth") storing tokens in
+    /// the data blob. Mirrors the Node oauth → connectionsRepo save shape.
+    pub async fn create_oauth_connection(
+        &self,
+        provider: &str,
+        name: &str,
+        access: &str,
+        refresh: &str,
+        expires_at: &str,
+        scope: &str,
+    ) -> anyhow::Result<String> {
+        let conn = self.inner.clone();
+        let provider = provider.to_string();
+        let name = name.to_string();
+        let access = access.to_string();
+        let refresh = refresh.to_string();
+        let expires_at = expires_at.to_string();
+        let scope = scope.to_string();
+        let created_id = tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
+            let mut conn = conn.blocking_lock();
+            let tx = conn.transaction()?;
+            let now = now_iso8601();
+            let id = uuid::Uuid::new_v4().to_string();
+            let priority: i64 = tx
+                .query_row(
+                    "SELECT COALESCE(MAX(priority), 0) FROM providerConnections WHERE provider = ?1",
+                    rusqlite::params![&provider],
+                    |r| r.get(0),
+                )
+                .unwrap_or(0)
+                + 1;
+            let data = serde_json::json!({
+                "accessToken": access,
+                "refreshToken": refresh,
+                "expiresAt": expires_at,
+                "scope": scope,
+                "testStatus": "unknown",
+            });
+            tx.execute(
+                "INSERT INTO providerConnections(id, provider, authType, name, email, priority, isActive, data, createdAt, updatedAt)
+                 VALUES(?1, ?2, 'oauth', ?3, NULL, ?4, 1, ?5, ?6, ?6)",
+                rusqlite::params![id, provider, name, priority, serde_json::to_string(&data)?, now],
+            )?;
+            reorder_priorities(&tx, &provider)?;
+            tx.commit()?;
+            Ok(id)
+        })
+        .await??;
+        Ok(created_id)
+    }
+
+    /// Merge refreshed tokens back into a connection's data blob.
+    pub async fn update_connection_tokens(
+        &self,
+        id: &str,
+        access: &str,
+        refresh: &str,
+        expires_at: &str,
+        scope: &str,
+    ) {
+        let conn = self.inner.clone();
+        let id = id.to_string();
+        let access = access.to_string();
+        let refresh = refresh.to_string();
+        let expires_at = expires_at.to_string();
+        let scope = scope.to_string();
+        let _ = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+            let conn = conn.blocking_lock();
+            let data: Option<String> = conn
+                .query_row(
+                    "SELECT data FROM providerConnections WHERE id = ?1",
+                    rusqlite::params![&id],
+                    |r| r.get(0),
+                )
+                .ok();
+            let Some(data) = data else { return Ok(()) };
+            let mut val: Value = serde_json::from_str(&data).unwrap_or_else(|_| Value::Object(Default::default()));
+            if let Some(obj) = val.as_object_mut() {
+                obj.insert("accessToken".into(), Value::String(access));
+                if !refresh.is_empty() {
+                    obj.insert("refreshToken".into(), Value::String(refresh));
+                }
+                obj.insert("expiresAt".into(), Value::String(expires_at));
+                if !scope.is_empty() {
+                    obj.insert("scope".into(), Value::String(scope));
+                }
+                obj.insert("lastError".into(), Value::Null);
+            }
+            conn.execute(
+                "UPDATE providerConnections SET data = ?1, updatedAt = ?2 WHERE id = ?3",
+                rusqlite::params![serde_json::to_string(&val)?, now_iso8601(), id],
+            )?;
+            Ok(())
+        })
+        .await;
+    }
+
+
     /// Read a single connection's full data blob (including secrets) — used by
     /// the connection-test handler to fetch the apiKey + transport info.
     pub async fn get_connection_full(&self, id: &str) -> Option<Value> {
@@ -1708,8 +1806,17 @@ fn is_model_locked(obj: &serde_json::Map<String, Value>, model: &str) -> bool {
     false
 }
 
-fn chrono_now_secs() -> i64 {
-    std::time::SystemTime::now()
+/// Best-effort RFC3339 → unix seconds (crate-public for the oauth module).
+pub fn parse_rfc3339_secs_pub(s: &str) -> Option<i64> {
+    parse_rfc3339_secs(s)
+}
+
+/// Unix secs → ISO 8601 UTC (crate-public for the oauth module).
+pub fn iso_from_secs_pub(secs: i64) -> String {
+    iso_from_secs(secs)
+}
+
+fn chrono_now_secs() -> i64 {    std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)

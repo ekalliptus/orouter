@@ -20,6 +20,8 @@ export const router = createRouter({
         { path: "quota", component: () => import("@/pages/QuotaPage.vue") },
         { path: "proxy-pools", component: () => import("@/pages/ProxyPoolsPage.vue") },
         { path: "console-log", component: () => import("@/pages/ConsoleLogPage.vue") },
+        { path: "token-saver", component: () => import("@/pages/TokenSaverPage.vue") },
+        { path: "translator", component: () => import("@/pages/TranslatorPage.vue") },
         { path: "cli-tools", component: () => import("@/pages/CliToolsPage.vue") },
         { path: "profile", component: () => import("@/pages/SettingsPage.vue") },
       ],

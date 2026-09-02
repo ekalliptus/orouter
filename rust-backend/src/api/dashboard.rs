@@ -308,6 +308,70 @@ pub async fn providers_test(State(state): State<AppState>, Path(id): Path<String
     ).into_response()
 }
 
+// ---- /api/oauth/:provider — native PKCE login/refresh ---------------------
+
+/// GET /api/oauth/providers — which providers support native login here.
+pub async fn oauth_providers() -> impl IntoResponse {
+    (
+        StatusCode::OK,
+        Json(json!({
+            "providers": crate::oauth::supported(),
+            "note": "credential login/refresh is native; inference for these providers needs the Node engine (hybrid mode)",
+        })),
+    )
+}
+
+/// POST /api/oauth/:provider/start → { authUrl, state }
+pub async fn oauth_start(Path(provider): Path<String>) -> Response {
+    match crate::oauth::start(&provider) {
+        Some((auth_url, state)) => (
+            StatusCode::OK,
+            Json(json!({ "authUrl": auth_url, "state": state })),
+        )
+            .into_response(),
+        None => error_response(
+            StatusCode::NOT_FOUND,
+            "unsupported OAuth provider (native: claude, codex, antigravity)",
+        ),
+    }
+}
+
+/// POST /api/oauth/:provider/exchange { state, code, connectionId? }
+pub async fn oauth_exchange(
+    State(state): State<AppState>,
+    Path(_provider): Path<String>,
+    Json(body): Json<Value>,
+) -> Response {
+    let state_in = body.get("state").and_then(|v| v.as_str()).unwrap_or("");
+    let code = body.get("code").and_then(|v| v.as_str()).unwrap_or("");
+    let connection_id = body
+        .get("connectionId")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+    if state_in.is_empty() || code.is_empty() {
+        return error_response(StatusCode::BAD_REQUEST, "state and code are required");
+    }
+    match crate::oauth::exchange(&state.db, &state.client, state_in, code, connection_id).await {
+        Ok(conn) => (StatusCode::OK, Json(json!({ "connection": conn }))).into_response(),
+        Err(e) => error_response(StatusCode::BAD_REQUEST, &e),
+    }
+}
+
+/// POST /api/oauth/:provider/refresh { connectionId }
+pub async fn oauth_refresh(
+    State(state): State<AppState>,
+    Path(_provider): Path<String>,
+    Json(body): Json<Value>,
+) -> Response {
+    let Some(connection_id) = body.get("connectionId").and_then(|v| v.as_str()) else {
+        return error_response(StatusCode::BAD_REQUEST, "connectionId is required");
+    };
+    match crate::oauth::refresh(&state.db, &state.client, connection_id).await {
+        Ok(v) => (StatusCode::OK, Json(v)).into_response(),
+        Err(e) => error_response(StatusCode::BAD_GATEWAY, &e),
+    }
+}
+
 // ---- /api/usage (M7) -----------------------------------------------------
 
 // ---- /api/proxy-pools -----------------------------------------------------

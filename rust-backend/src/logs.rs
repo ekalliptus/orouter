@@ -13,7 +13,6 @@ use once_cell::sync::Lazy;
 use serde_json::json;
 use tracing::{Event, Subscriber};
 use tracing_subscriber::layer::{Context, Layer};
-use tracing_subscriber::registry;
 
 const CAP: usize = 1000;
 

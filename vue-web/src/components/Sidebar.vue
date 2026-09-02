@@ -78,7 +78,7 @@ function isActive(href: string, pathname: string) {
       <div class="pt-3 mt-2 space-y-0.5" style="border-top: 1px solid var(--color-border-subtle)">
         <p class="console-label" style="margin: 0 0 0.5rem; padding: 0 0.75rem">System</p>
         <router-link
-          v-for="item in systemItems"
+          v-for="item in [...systemItems, { href: '/dashboard/token-saver', label: 'Token Saver', icon: 'savings' }, { href: '/dashboard/translator', label: 'Translator', icon: 'translate' }]"
           :key="item.href"
           :to="item.href"
           class="nav-item"

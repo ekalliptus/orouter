@@ -63,6 +63,16 @@ const editEmail = ref("");
 const editApiKey = ref("");
 const savingEdit = ref(false);
 
+// OAuth login flow state
+const OAUTH_PROVIDERS = ["claude", "codex", "antigravity"];
+const showOAuthModal = ref(false);
+const oauthProvider = ref("claude");
+const oauthState = ref("");
+const oauthAuthUrl = ref("");
+const oauthCodeInput = ref("");
+const oauthBusy = ref(false);
+const oauthError = ref<string | null>(null);
+
 async function load() {
   loading.value = true;
   try {
@@ -205,6 +215,67 @@ async function remove(p: Connection) {
     toast.error("Failed to delete connection");
   }
 }
+
+// ---- OAuth login (claude / codex / antigravity) ----
+
+async function startOAuth() {
+  oauthBusy.value = true;
+  oauthError.value = null;
+  oauthAuthUrl.value = "";
+  oauthState.value = "";
+  oauthCodeInput.value = "";
+  try {
+    const r = await api.post<{ authUrl: string; state: string }>(`/api/oauth/${oauthProvider.value}/start`);
+    oauthState.value = r.state;
+    oauthAuthUrl.value = r.authUrl;
+    window.open(r.authUrl, "_blank");
+  } catch {
+    oauthError.value = "Failed to start OAuth flow";
+  } finally {
+    oauthBusy.value = false;
+  }
+}
+
+async function exchangeOAuth() {
+  if (!oauthCodeInput.value.trim() || !oauthState.value) return;
+  oauthBusy.value = true;
+  oauthError.value = null;
+  try {
+    await api.post(`/api/oauth/${oauthProvider.value}/exchange`, {
+      state: oauthState.value,
+      code: oauthCodeInput.value.trim(),
+    });
+    toast.success(`${oauthProvider.value} account connected!`);
+    showOAuthModal.value = false;
+    await load();
+  } catch (e) {
+    oauthError.value = e instanceof Error && e.message ? e.message : "Exchange failed";
+  } finally {
+    oauthBusy.value = false;
+  }
+}
+
+function isOAuth(p: Connection) {
+  return p.authType === "oauth";
+}
+
+function expiryInfo(p: Connection) {
+  const exp = typeof p.expiresAt === "string" ? p.expiresAt : null;
+  if (!exp) return null;
+  const secs = Math.floor(new Date(exp).getTime() / 1000) - Math.floor(Date.now() / 1000);
+  return { expired: secs <= 0, inHours: Math.round(secs / 360) / 10 };
+}
+
+async function refreshOAuth(p: Connection) {
+  toast.info(`Refreshing ${p.name ?? p.provider} token…`);
+  try {
+    const r = await api.post<{ expiresAt: string }>(`/api/oauth/${p.provider}/refresh`, { connectionId: p.id });
+    toast.success(`Token refreshed — valid until ${new Date(r.expiresAt).toLocaleString()}`);
+    await load();
+  } catch (e) {
+    toast.error(e instanceof Error && e.message ? e.message : "Refresh failed", "Token Refresh");
+  }
+}
 </script>
 
 <template>
@@ -219,6 +290,9 @@ async function remove(p: Connection) {
       </button>
       <button class="kid-btn kid-btn--primary" style="padding: 0.3rem 0.75rem" @click="showAddForm = !showAddForm">
         {{ showAddForm ? "✕ Close Form" : "＋ Add Provider" }}
+      </button>
+      <button class="kid-btn" style="padding: 0.3rem 0.75rem" @click="showOAuthModal = true">
+        <span class="material-symbols-outlined" style="font-size: 16px">key</span> OAuth Login
       </button>
     </div>
 
@@ -290,12 +364,16 @@ async function remove(p: Connection) {
               </Badge>
             </div>
 
-            <div
-              v-if="p.lastError"
-              style="font-family: var(--font-body); font-size: 0.85rem; color: var(--color-danger); margin-top: 0.5rem; background: var(--color-bg-alt); padding: 0.3rem 0.5rem; border: 1px solid var(--nb-border)"
-            >
-              {{ p.lastError }}
-            </div>
+                        <div
+                          v-if="p.lastError"
+                          style="font-family: var(--font-body); font-size: 0.85rem; color: var(--color-danger); margin-top: 0.5rem; background: var(--color-bg-alt); padding: 0.3rem 0.5rem; border: 1px solid var(--nb-border)"
+                        >
+                          {{ p.lastError }}
+                        </div>
+                        <div v-if="isOAuth(p) && expiryInfo(p)" style="font-family: var(--font-body); font-size: 0.85rem; margin-top: 0.5rem" :style="expiryInfo(p)!.expired ? { color: 'var(--color-danger)' } : { color: 'var(--color-text-muted)' }">
+                          <span class="material-symbols-outlined" style="font-size: 13px; vertical-align: middle">schedule</span>
+                          token {{ expiryInfo(p)!.expired ? "EXPIRED" : `expires in ~${expiryInfo(p)!.inHours}h` }}
+                        </div>
 
             <div style="display: flex; align-items: center; justify-content: space-between; margin-top: 0.85rem; gap: 0.5rem; flex-wrap: wrap">
               <div style="display: flex; align-items: center; gap: 0.4rem">
@@ -304,6 +382,9 @@ async function remove(p: Connection) {
                 <Toggle :checked="p.isActive !== false" @change="() => toggleActive(p)" />
               </div>
               <div style="display: flex; gap: 0.4rem">
+                <button v-if="isOAuth(p)" class="kid-btn" style="padding: 0.25rem 0.5rem" title="Refresh token" @click="refreshOAuth(p)">
+                  <span class="material-symbols-outlined" style="font-size: 16px">autorenew</span>
+                </button>
                 <button class="kid-btn" style="padding: 0.25rem 0.5rem" @click="openEdit(p)">
                   <span class="material-symbols-outlined" style="font-size: 16px">edit</span>
                 </button>
@@ -351,6 +432,43 @@ async function remove(p: Connection) {
           </button>
         </div>
       </form>
+    </div>
+    <!-- OAuth Login modal -->
+    <div
+      v-if="showOAuthModal"
+      style="position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 100; display: flex; align-items: center; justify-content: center; padding: 1rem"
+      @click.self="showOAuthModal = false"
+    >
+      <div class="kid-card kid-wobble" style="width: min(480px, 100%); background: var(--color-surface)">
+        <h3 style="font-size: 1.3rem; margin: 0 0 0.75rem">OAuth Login</h3>
+        <div style="display: grid; gap: 0.6rem">
+          <div>
+            <label style="font-family: var(--font-body); font-size: 0.9rem">Provider</label>
+            <select v-model="oauthProvider" class="kid-input" :disabled="oauthBusy">
+              <option v-for="p in OAUTH_PROVIDERS" :key="p" :value="p">{{ p }}</option>
+            </select>
+          </div>
+          <button class="kid-btn kid-btn--primary" :disabled="oauthBusy" @click="startOAuth">
+            <span class="material-symbols-outlined" style="font-size: 16px">open_in_new</span>
+            {{ oauthAuthUrl ? "Re-open authorize page" : "1. Open authorize page" }}
+          </button>
+          <div v-if="oauthAuthUrl" style="font-family: var(--font-body); font-size: 0.85rem; color: var(--color-text-muted)">
+            Authorize in the browser tab, then paste the <strong>code</strong> (claude) or the
+            <strong>full callback URL</strong> (codex / antigravity) below.
+          </div>
+          <div v-if="oauthAuthUrl">
+            <label style="font-family: var(--font-body); font-size: 0.9rem">2. Paste code / callback URL</label>
+            <textarea v-model="oauthCodeInput" class="kid-input" rows="3" placeholder="e.g. http://localhost:1455/auth/callback?code=…&state=…" :disabled="oauthBusy" />
+          </div>
+          <div v-if="oauthError" style="font-family: var(--font-body); font-size: 0.9rem; color: var(--color-danger)">{{ oauthError }}</div>
+        </div>
+        <div style="display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1.25rem">
+          <button type="button" class="kid-btn" :disabled="oauthBusy" @click="showOAuthModal = false">Cancel</button>
+          <button class="kid-btn kid-btn--primary" :disabled="oauthBusy || !oauthAuthUrl || !oauthCodeInput.trim()" @click="exchangeOAuth">
+            {{ oauthBusy ? "Working…" : "3. Connect" }}
+          </button>
+        </div>
+      </div>
     </div>
   </div>
 </template>
