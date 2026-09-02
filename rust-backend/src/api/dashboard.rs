@@ -372,6 +372,43 @@ pub async fn oauth_refresh(
     }
 }
 
+/// POST /api/settings/proxy-test {proxyUrl} — Node profile-page parity:
+/// verify an outbound proxy by fetching an IP echo through it.
+pub async fn settings_proxy_test(State(state): State<AppState>, Json(body): Json<Value>) -> Response {
+    let Some(proxy_url) = body.get("proxyUrl").and_then(|v| v.as_str()).map(str::trim) else {
+        return error_response(StatusCode::BAD_REQUEST, "proxyUrl is required");
+    };
+    if proxy_url.is_empty() {
+        return error_response(StatusCode::BAD_REQUEST, "proxyUrl is empty");
+    }
+    let client = state.client_for(Some(proxy_url));
+    match client
+        .get("https://api.ipify.org?format=json")
+        .timeout(std::time::Duration::from_secs(15))
+        .send()
+        .await
+    {
+        Ok(r) => {
+            let ok = r.status().is_success();
+            let ip = r
+                .json::<Value>()
+                .await
+                .ok()
+                .and_then(|v| v.get("ip").and_then(|x| x.as_str()).map(String::from));
+            (
+                StatusCode::OK,
+                Json(json!({ "ok": ok, "ip": ip })),
+            )
+                .into_response()
+        }
+        Err(e) => (
+            StatusCode::OK,
+            Json(json!({ "ok": false, "error": format!("network error: {e}") })),
+        )
+            .into_response(),
+    }
+}
+
 // ---- /api/translator — native parity with the Node translator builder ----
 //
 // The Node builder reads captured translation-pipeline dumps from

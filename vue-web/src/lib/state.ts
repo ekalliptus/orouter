@@ -4,6 +4,10 @@ import { ref } from "vue";
 
 const cached = ref<boolean | null>(null);
 
+// Header contextual search (Node parity): pages like Providers/Models read
+// this instead of a page-local input.
+export const searchQuery = ref("");
+
 export function useAuthed() {
   return cached;
 }

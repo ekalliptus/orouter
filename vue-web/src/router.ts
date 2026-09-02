@@ -14,6 +14,7 @@ export const router = createRouter({
       children: [
         { path: "", component: () => import("@/pages/EndpointPage.vue") },
         { path: "providers", component: () => import("@/pages/ProvidersPage.vue") },
+        { path: "providers/:id", component: () => import("@/pages/ProviderDetailPage.vue") },
         { path: "models", component: () => import("@/pages/ModelsPage.vue") },
         { path: "combos", component: () => import("@/pages/CombosPage.vue") },
         { path: "usage", component: () => import("@/pages/UsagePage.vue") },

@@ -4,6 +4,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { useRoute } from "vue-router";
+import { searchQuery } from "@/lib/state";
 
 const route = useRoute();
 const dark = ref(document.documentElement.classList.contains("dark"));
@@ -23,21 +24,28 @@ try {
   }
 } catch { /* ok */ }
 
-const PAGE_INFO: { match: (p: string) => boolean; title: string; description: string; icon: string }[] = [
-  { match: (p) => p.includes("/providers"), title: "Providers", description: "Manage your AI provider connections", icon: "dns" },
-  { match: (p) => p.includes("/models"), title: "Models", description: "Every model the router knows about", icon: "category" },
+const PAGE_INFO: { match: (p: string) => boolean; title: string; description: string; icon: string; searchable?: boolean; searchPlaceholder?: string }[] = [
+  { match: (p) => p.includes("/providers"), title: "Providers", description: "Manage your AI provider connections", icon: "dns", searchable: true, searchPlaceholder: "Search providers..." },
+  { match: (p) => p.includes("/models"), title: "Models", description: "Every model the router knows about", icon: "category", searchable: true, searchPlaceholder: "Search models..." },
   { match: (p) => p.includes("/combos"), title: "Combos", description: "Model combos with fallback", icon: "layers" },
   { match: (p) => p.includes("/usage"), title: "Usage & Analytics", description: "Monitor your API usage, token consumption, and request logs", icon: "bar_chart" },
+  { match: (p) => p.includes("/quota"), title: "Quota Tracker", description: "Live quota per connected account", icon: "data_usage" },
+  { match: (p) => p.includes("/proxy-pools"), title: "Proxy Pools", description: "Route provider traffic through proxies", icon: "hub" },
+  { match: (p) => p.includes("/console-log"), title: "Console Log", description: "Live server log tail", icon: "monitoring" },
+  { match: (p) => p.includes("/token-saver"), title: "Token Saver", description: "Cut prompt tokens in-flight", icon: "savings" },
+  { match: (p) => p.includes("/translator"), title: "Translator", description: "Test payloads through the router", icon: "translate" },
   { match: (p) => p.includes("/cli-tools"), title: "CLI Tools", description: "Configure CLI tools", icon: "terminal" },
   { match: (p) => p.includes("/profile"), title: "Settings", description: "Manage your preferences", icon: "settings" },
 ];
 
 const info = computed(() => {
   const p = route.path;
-  return PAGE_INFO.find((x) => x.match(p)) ?? { title: "Endpoint & Key", description: "API endpoint configuration and keys", icon: "api" };
+  return PAGE_INFO.find((x) => x.match(p)) ?? { title: "Endpoint & Key", description: "API endpoint configuration and keys", icon: "api", searchable: false, searchPlaceholder: "" };
 });
 
-watch(() => route.path, () => { /* reactive via computed */ });
+watch(() => route.path, () => {
+  searchQuery.value = "";
+});
 </script>
 
 <template>
@@ -50,15 +58,30 @@ watch(() => route.path, () => { /* reactive via computed */ });
       </div>
     </div>
 
-    <div class="flex items-center gap-2">
-      <button
-        aria-label="Toggle theme"
-        class="theme-toggle"
-        @click="toggleTheme"
-      >
-        <span class="material-symbols-outlined" style="font-size: 22px">{{ dark ? "light_mode" : "dark_mode" }}</span>
-      </button>
-    </div>
+      <div class="flex items-center gap-2">
+        <div v-if="info.searchable" style="position: relative; display: flex; align-items: center">
+          <span class="material-symbols-outlined" style="font-size: 18px; position: absolute; left: 8px; color: var(--color-text-muted)">search</span>
+          <input
+            v-model="searchQuery"
+            :placeholder="info.searchPlaceholder"
+            style="height: 32px; width: 200px; padding: 0 28px 0 32px; font-family: var(--font-body); font-size: 0.85rem; background: color-mix(in srgb, var(--color-surface) 60%, transparent); border: 1px solid var(--nb-border); outline: none; color: var(--color-text-main)"
+          />
+          <button
+            v-if="searchQuery"
+            style="position: absolute; right: 4px; border: none; background: transparent; cursor: pointer; color: var(--color-text-muted); display: flex"
+            @click="searchQuery = ''"
+          >
+            <span class="material-symbols-outlined" style="font-size: 16px">close</span>
+          </button>
+        </div>
+        <button
+          aria-label="Toggle theme"
+          class="theme-toggle"
+          @click="toggleTheme"
+        >
+          <span class="material-symbols-outlined" style="font-size: 22px">{{ dark ? "light_mode" : "dark_mode" }}</span>
+        </button>
+      </div>
   </header>
 </template>
 

@@ -107,6 +107,10 @@ async fn main() {
             get(api::dashboard::settings_get).patch(api::dashboard::settings_patch),
         )
         .route(
+            "/api/settings/proxy-test",
+            axum::routing::post(api::dashboard::settings_proxy_test),
+        )
+        .route(
             "/api/keys",
             get(api::dashboard::keys_get).post(api::dashboard::keys_post),
         )
