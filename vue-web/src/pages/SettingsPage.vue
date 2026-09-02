@@ -211,20 +211,7 @@ function fmtUptime(secs: number) {
       </form>
     </div>
 
-    <!-- 3. SSO (honest note) -->
-    <div class="kid-card">
-      <div style="display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.5rem">
-        <span class="material-symbols-outlined" style="font-size: 20px; color: var(--color-primary)">badge</span>
-        <h2 style="font-size: 1.2rem; margin: 0">Single Sign-On (SSO)</h2>
-      </div>
-      <div style="font-family: var(--font-body); font-size: 0.92rem; color: var(--color-text-muted)">
-        SAML / OIDC configuration and the SSO login flow run on the Node engine —
-        start hybrid mode (NODE_UPSTREAM) and open the Node dashboard to configure SSO.
-        Current auth mode: <strong>{{ str('authMode') || 'password' }}</strong>.
-      </div>
-    </div>
-
-    <!-- 4. Routing Strategy -->
+    <!-- 3. Routing Strategy -->
     <div class="kid-card">
       <div style="display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.75rem">
         <span class="material-symbols-outlined" style="font-size: 20px; color: var(--color-primary)">route</span>

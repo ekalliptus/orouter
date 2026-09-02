@@ -21,6 +21,7 @@ mod oauth;
 mod proxy;
 mod quota;
 mod snapshot;
+mod webtools;
 
 use std::time::Duration;
 
@@ -274,6 +275,11 @@ async fn main() {
             .route("/v1/messages", post(anthropic::messages))
             .route("/v1/messages/count_tokens", post(anthropic::count_tokens))
             .route("/v1/embeddings", post(proxy::embeddings))
+            .route("/v1/web/fetch", post(api::web_fetch))
+            .route("/v1/search", post(api::web_search))
+            .route("/v1/responses", post(api::v1_responses))
+            .route("/v1/images/generations", post(api::v1_images))
+            .route("/v1/audio/speech", post(api::v1_audio_speech))
             .fallback(proxy::reverse::proxy_to_node)
             .layer(RequestBodyLimitLayer::new(cfg.body_max_bytes))
             .layer(CorsLayer::very_permissive())
@@ -290,6 +296,11 @@ async fn main() {
             .route("/v1/messages", post(anthropic::messages))
             .route("/v1/messages/count_tokens", post(anthropic::count_tokens))
             .route("/v1/embeddings", post(proxy::embeddings))
+            .route("/v1/web/fetch", post(api::web_fetch))
+            .route("/v1/search", post(api::web_search))
+            .route("/v1/responses", post(api::v1_responses))
+            .route("/v1/images/generations", post(api::v1_images))
+            .route("/v1/audio/speech", post(api::v1_audio_speech))
             .merge(auth_routes)
             .merge(dashboard_routes)
             .merge(backend_not_found)

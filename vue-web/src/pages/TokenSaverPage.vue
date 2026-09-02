@@ -2,13 +2,20 @@
 // Settings persist natively; the compression engines themselves run in the
 // Node engine (hybrid mode) — the page is honest about that.
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { api } from "@/lib/api";
 import { toast } from "@/lib/state";
 import Toggle from "@/components/Toggle.vue";
 
 const settings = ref<Record<string, unknown> | null>(null);
 const headroomUrl = ref("");
+
+// Node caveman prompt keys (cavemanPrompts.js) — includes wenyan variants.
+const CAVE_LEVELS = ["lite", "full", "ultra", "wenyan-lite", "wenyan", "wenyan-ultra"];
+const cavemanLevel = computed(() => {
+  const v = String(settings.value?.cavemanLevel ?? "full");
+  return CAVE_LEVELS.includes(v) ? v : v || "full";
+});
 
 function bool(key: string): boolean {
   return !!settings.value?.[key];
@@ -58,11 +65,11 @@ async function patch(patchObj: Record<string, unknown>, okMsg: string) {
           <div style="font-family: var(--font-body); color: var(--color-text-muted); font-size: 0.95rem">Rewrite verbose content into terse caveman speak.</div>
           <Toggle :checked="bool('cavemanEnabled')" @change="(v) => patch({ cavemanEnabled: v }, 'cavemanEnabled updated')" />
         </div>
-        <div v-if="bool('cavemanEnabled')" style="margin-top: 0.75rem; max-width: 220px">
+        <div v-if="bool('cavemanEnabled')" style="margin-top: 0.75rem; max-width: 260px">
           <label style="font-family: var(--font-body); font-size: 0.9rem">Level</label>
-          <select class="kid-input" :value="str('cavemanLevel') || 'full'" @change="patch({ cavemanLevel: ($event.target as HTMLSelectElement).value }, 'cavemanLevel updated')">
-            <option value="lite">lite</option>
-            <option value="full">full</option>
+          <select class="kid-input" :value="cavemanLevel" @change="patch({ cavemanLevel: ($event.target as HTMLSelectElement).value }, 'cavemanLevel updated')">
+            <option v-for="lv in CAVE_LEVELS" :key="lv" :value="lv">{{ lv }}</option>
+            <option v-if="cavemanLevel && !CAVE_LEVELS.includes(cavemanLevel)" :value="cavemanLevel">{{ cavemanLevel }} (custom)</option>
           </select>
         </div>
       </div>

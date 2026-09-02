@@ -517,6 +517,97 @@ pub async fn embeddings(
     Err(last.unwrap_or(ChatError { status: StatusCode::BAD_GATEWAY, message: "embeddings failed".into() }))
 }
 
+/// POST /v1/{responses|images/generations|audio/speech} — format-preserving
+/// relay of multimodal/responses payloads to a native-transport provider.
+/// Requires "provider/model" form (bare ids resolve llm candidates only).
+pub async fn relay_provider_endpoint(
+    state: State<AppState>,
+    headers: HeaderMap,
+    body: Bytes,
+    path_suffix: &str,
+) -> Result<Response, ChatError> {
+    let payload: Value = serde_json::from_slice(&body).map_err(|_| ChatError {
+        status: StatusCode::BAD_REQUEST,
+        message: "Invalid JSON body".into(),
+    })?;
+    let model = payload
+        .get("model")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    if model.is_empty() {
+        return Err(ChatError { status: StatusCode::BAD_REQUEST, message: "Missing model".into() });
+    }
+    if state.db.require_api_key().await {
+        let presented = extract_api_key(&headers);
+        match presented {
+            Some(k) if state.db.validate_api_key(&k).await => {}
+            _ => return Err(ChatError { status: StatusCode::UNAUTHORIZED, message: "Missing or invalid API key".into() }),
+        }
+    }
+    let Some((provider_id, upstream_model)) = model.split_once('/') else {
+        return Err(ChatError {
+            status: StatusCode::NOT_FOUND,
+            message: "use 'provider/model' for this endpoint".into(),
+        });
+    };
+    let Some(transport) = snapshot::resolve(&format!("{provider_id}/__transport__")).map(|r| r.transport) else {
+        return Err(ChatError { status: StatusCode::NOT_FOUND, message: format!("provider '{provider_id}' has no native transport") });
+    };
+    let base = transport
+        .base_url
+        .trim_end_matches('/')
+        .trim_end_matches("/chat/completions")
+        .to_string();
+
+    let mut payload_val = payload.clone();
+    if let Some(obj) = payload_val.as_object_mut() {
+        obj.insert("model".into(), Value::String(upstream_model.to_string()));
+    }
+    let payload_bytes = serde_json::to_vec(&payload_val).unwrap_or_default();
+
+    let credentials = state.db.pick_credentials_all(provider_id, &model).await;
+    let mut last: Option<ChatError> = None;
+    let mut last_body: Option<(StatusCode, Bytes, String)> = None;
+    for cred in &credentials {
+        let proxy_url = state.db.resolve_connection_proxy(&cred.connection_id).await;
+        let http = state.client_for(proxy_url.as_deref());
+        let resp = http
+            .post(format!("{base}{path_suffix}"))
+            .header("authorization", format!("Bearer {}", cred.secret))
+            .header("content-type", "application/json")
+            .body(payload_bytes.clone())
+            .timeout(Duration::from_secs(180))
+            .send()
+            .await;
+        match resp {
+            Ok(r) => {
+                let status = r.status();
+                let ct = r.headers().get("content-type").cloned().unwrap_or_else(|| HeaderValue::from_static("application/json"));
+                let bytes = r.bytes().await.unwrap_or_default();
+                if status.is_success() {
+                    return Ok(Response::builder()
+                        .status(StatusCode::OK)
+                        .header("content-type", ct)
+                        .body(Body::from(bytes))
+                        .unwrap());
+                }
+                last_body = Some((status, bytes.clone(), ct.to_str().unwrap_or("application/json").to_string()));
+                last = Some(ChatError { status: StatusCode::BAD_GATEWAY, message: format!("HTTP {}", status.as_u16()) });
+            }
+            Err(e) => last = Some(ChatError { status: StatusCode::BAD_GATEWAY, message: format!("fetch: {e}") }),
+        }
+    }
+    if let Some((status, body, ct)) = last_body {
+        return Ok(Response::builder()
+            .status(status)
+            .header("content-type", ct)
+            .body(Body::from(body))
+            .unwrap());
+    }
+    Err(last.unwrap_or(ChatError { status: StatusCode::BAD_GATEWAY, message: "request failed".into() }))
+}
+
 /// Context threaded into the relays so they can persist usage after the request.
 #[derive(Clone)]
 struct UsageCtx {
