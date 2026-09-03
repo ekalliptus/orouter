@@ -160,14 +160,8 @@ pub async fn chat_completions(
     // to the Node proxy which has the full Cloud Code executor for proper
     // auth, project resolution, and content generation.
 
-    // Antigravity special-case: `ag/<model>` or `antigravity/<model>` routes
-    // through the Cloud Code generateContent API natively.
-    let model = if let Some(rest) = model.strip_prefix("ag/") {
-        format!("antigravity/{rest}")
-    } else {
-        model
-    };
-
+    // Antigravity models are NOT special-cased here — they fall through to
+    // the Node proxy which has the full Cloud Code executor.
     #[derive(Clone)]
     struct Target {
         provider_id: String,
