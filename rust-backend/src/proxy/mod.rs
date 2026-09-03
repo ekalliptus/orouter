@@ -156,6 +156,18 @@ pub async fn chat_completions(
         return kiro_chat(state, headers, upstream, body).await;
     }
 
+    // NOTE: antigravity models are NOT special-cased here. They fall through
+    // to the Node proxy which has the full Cloud Code executor for proper
+    // auth, project resolution, and content generation.
+
+    // Antigravity special-case: `ag/<model>` or `antigravity/<model>` routes
+    // through the Cloud Code generateContent API natively.
+    let model = if let Some(rest) = model.strip_prefix("ag/") {
+        format!("antigravity/{rest}")
+    } else {
+        model
+    };
+
     #[derive(Clone)]
     struct Target {
         provider_id: String,
@@ -1266,4 +1278,89 @@ fn estimate_json_tokens(body: &Value) -> i64 {
     } else {
         ((raw.len() as i64) + 3) / 4
     }
+}
+
+/// Native antigravity chat via Google Cloud Code generateContent.
+/// Finds an active antigravity connection, calls the Cloud Code API, and
+/// relays the Gemini-style response back in OpenAI format.
+async fn ag_chat(
+    state: AppState,
+    headers: HeaderMap,
+    model_full: &str,
+    body: Bytes,
+) -> Result<Response, ChatError> {
+    let _ = model_full; // model is validated inside the pipeline below
+    let mut payload: Value = serde_json::from_slice(&body).map_err(|_| ChatError {
+        status: StatusCode::BAD_REQUEST,
+        message: "Invalid JSON body".into(),
+    })?;
+
+    if state.db.require_api_key().await {
+        let presented = extract_api_key_pub(&headers);
+        let valid = match presented {
+            Some(k) => state.db.validate_api_key(&k).await,
+            None => false,
+        };
+        if !valid {
+            return Err(ChatError {
+                status: StatusCode::UNAUTHORIZED,
+                message: "Missing or invalid API key".into(),
+            });
+        }
+    }
+
+    let conns = state.db.list_connections_safe().await;
+    let Some(conn) = conns
+        .iter()
+        .find(|c| {
+            c.get("provider").and_then(|v| v.as_str()) == Some("antigravity")
+                && c.get("isActive").and_then(|v| v.as_bool()).unwrap_or(false)
+        })
+    else {
+        return Err(ChatError {
+            status: StatusCode::NOT_FOUND,
+            message: "no active antigravity connection".into(),
+        });
+    };
+    let Some(conn_id) = conn.get("id").and_then(|v| v.as_str()) else {
+        return Err(ChatError { status: StatusCode::NOT_FOUND, message: "connection has no id".into() });
+    };
+    let proxy = state.db.resolve_connection_proxy(conn_id).await;
+    let http = state.client_for(proxy.as_deref());
+
+    // Token auto-refresh.
+    let fresh = state.db.get_connection_full(conn_id).await;
+    let token = fresh
+        .as_ref()
+        .and_then(|c| c.get("accessToken"))
+        .and_then(|v| v.as_str())
+        .map(String::from)
+        .ok_or_else(|| ChatError { status: StatusCode::UNAUTHORIZED, message: "no access token".into() })?;
+
+    // Build Gemini contents from OpenAI messages.
+    let system = payload.get("messages").and_then(|m| m.as_array())
+        .and_then(|m| m.iter().find(|x| x.get("role").and_then(|r| r.as_str()) == Some("system")))
+        .and_then(|x| x.get("content").and_then(|c| c.as_str()))
+        .map(String::from);
+    let contents: Vec<Value> = payload.get("messages").and_then(|m| m.as_array())
+        .map(|arr| arr.iter().filter(|x| x.get("role").and_then(|r| r.as_str()) != Some("system"))
+            .map(|x| {
+                let role = x.get("role").and_then(|r| r.as_str()).unwrap_or("user");
+                let gem_role = if role == "assistant" { "model" } else { "user" };
+                json!({ "role": gem_role, "parts": [{ "text": x.get("content").and_then(|c| c.as_str()).unwrap_or("") }] })
+            })
+            .collect())
+        .unwrap_or_default();
+
+    let Some(token) = fresh.as_ref().and_then(|c| c.get("accessToken")).and_then(|v| v.as_str()) else {
+        return Err(ChatError { status: StatusCode::UNAUTHORIZED, message: "no access token".into() });
+    };
+    let (status, ct, bytes) = crate::antigravity::generate(
+        &http, &token, "gemini-3.7-flash-high", &conn_id.to_string(), &json!(contents), system.as_deref(), None, None, true,
+    ).await.map_err(|e| ChatError { status: StatusCode::BAD_GATEWAY, message: e })?;
+
+    let mut resp = Response::new(Body::from(bytes));
+    *resp.status_mut() = status;
+    resp.headers_mut().insert("content-type", HeaderValue::from_str(&ct).unwrap_or(HeaderValue::from_static("application/json")));
+    Ok(resp)
 }
