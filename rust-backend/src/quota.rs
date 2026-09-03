@@ -319,6 +319,8 @@ pub async fn fetch_quota(db: &Db, http: &reqwest::Client, conn: &Value) -> Value
     let provider = conn.get("provider").and_then(|v| v.as_str()).unwrap_or("").to_string();
     let id = conn.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
 
+    // Shorter timeouts for the quota probe: don't hang the UI.
+
     // OAuth connections: refresh first when the token is at/near expiry.
     let mut conn = conn.clone();
     if conn.get("authType").and_then(|v| v.as_str()) == Some("oauth") {
