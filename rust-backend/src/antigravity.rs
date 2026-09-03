@@ -56,12 +56,14 @@ pub async fn generate(
     http: &Client,
     token: &str,
     model: &str,
+    connection_id: &str,
     contents: &Value,
     system: Option<&str>,
     max_tokens: Option<i64>,
     temperature: Option<f64>,
     stream: bool,
 ) -> Result<(reqwest::StatusCode, String, bytes::Bytes), String> {
+    let session_id = format!("orouter-{}", connection_id);
     let project = resolve_project(http, token)
         .await
         .unwrap_or_else(|| Uuid::new_v4().to_string());
@@ -81,11 +83,17 @@ pub async fn generate(
         gc["temperature"] = json!(t);
     }
     gemini_request["generationConfig"] = gc;
+    gemini_request["sessionId"] = json!(session_id);
     // project goes at top level, NOT inside request
+
+    // sessionId and requestId required by Cloud Code API (antigravity parity)
+    let request_id = Uuid::new_v4().to_string();
 
     let body = json!({
         "model": model,
         "project": project,
+        "userAgent": "antigravity",
+        "requestType": "agent",
         "request": gemini_request,
     });
 

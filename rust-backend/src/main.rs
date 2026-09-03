@@ -11,6 +11,7 @@
 //! later milestones. See PLAN.md / the conversation for the milestone map.
 
 mod anthropic;
+mod antigravity;
 mod api;
 mod auth;
 mod config;
