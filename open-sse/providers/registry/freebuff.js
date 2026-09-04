@@ -23,8 +23,17 @@ export default {
   authModes: ["apikey"],
   serviceKinds: ["llm"],
   transport: {
-    baseUrl: "https://freebuff.com/api/v1/chat/completions",
-    validateUrl: "https://freebuff.com/api/v1/me",
+    // Freebuff is a Codebuff rebrand: the CLI binary posts chat requests to
+    // codebuff.com/api/v1/chat/completions (verified in freebuff.exe — the
+    // url builder is path.join("/api/v1", "/chat/completions") on FP() base).
+    // Auth = Bearer token from `freebuff login` (stored in
+    // ~/.config/manicode/auth.json / CODEBUFF_API_KEY env).
+    baseUrl: "https://www.codebuff.com/api/v1/chat/completions",
+    validateUrl: "https://www.codebuff.com/api/v1/me",
+    // Their backend mirrors the exact UA the CLI sends (ai-sdk/openai-compatible/x/codebuff).
+    headers: {
+      "User-Agent": "ai-sdk/openai-compatible/1.0.0/codebuff",
+    },
     thinkingFormat: "openai",
     minMaxTokens: 4096,
   },
