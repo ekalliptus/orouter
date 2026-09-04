@@ -506,15 +506,6 @@ input, textarea {
   font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
 }
 
-/* Prevent icon-name text flash: hide icons until font loads */
-.material-symbols-outlined {
-  opacity: 0;
-  transition: opacity 0.15s ease;
-}
-.fonts-loaded .material-symbols-outlined {
-  opacity: 1;
-}
-
 /* Skeleton shimmer gradient for loading cards (complements existing keyframes) */
 .skeleton-loading {
   background: linear-gradient(
