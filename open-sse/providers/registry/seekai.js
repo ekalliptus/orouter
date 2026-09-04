@@ -1,10 +1,14 @@
 // SeekAI — OpenAI-compatible unified LLM gateway (seekai.cc).
-// Replaces AgentRouter as the user's preferred gateway.
+// Single API key, POST /v1/chat/completions, Bearer auth. Streaming, tool/function calling and
+// JSON mode all work over the standard OpenAI Chat Completions wire format — no custom executor,
+// no translation hop needed.
+//
+// Replaces AgentRouter (agentrouter.org) as the user's preferred gateway.
 export default {
-  id: "agentrouter",
+  id: "seekai",
   priority: 105,
   alias: "seekai",
-  aliases: ["sa", "agentrouter", "ar"],
+  aliases: ["sa"],
   uiAlias: "sa",
   display: {
     name: "SeekAI",
@@ -35,4 +39,3 @@ export default {
     { id: "deepseek-v4-flash", name: "DeepSeek V4 Flash" },
   ],
 };
-
