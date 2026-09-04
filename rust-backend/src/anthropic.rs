@@ -329,6 +329,7 @@ impl AnSseConverter {
     /// Feed one raw OpenAI SSE line (may contain "data: {...}").
     /// Returns the Anthropic SSE events to emit (possibly empty).
     pub fn feed_line(&mut self, line: &str) -> Vec<String> {
+        if self.stopped { return vec![]; }
         let line = line.trim();
         let Some(data) = line.strip_prefix("data: ") else { return vec![] };
         let data = data.trim();

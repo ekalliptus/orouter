@@ -245,37 +245,28 @@ pub async fn providers_test(State(state): State<AppState>, Path(id): Path<String
     }
 
     // Resolve the provider's native transport to find its base URL + auth.
-    // We derive a /models probe URL from the transport base (strip the
-    // /chat/completions suffix) or fall back to a best-effort GET.
-    let (models_url, auth_header, auth_scheme, headers) =
-        match crate::snapshot::resolve(&format!("{provider}/__probe__")) {
-            Some(r) => {
-                // transport.base_url is the chat completions URL; derive /models.
-                let base = r.transport.base_url.trim_end_matches('/').to_string();
-                let mu = base
-                    .trim_end_matches("/chat/completions")
-                    .trim_end_matches("/completions")
-                    .to_string();
-                let probe_url = if provider == "openrouter" {
-                    "https://openrouter.ai/api/v1/auth/key".to_string()
-                } else {
-                    format!("{mu}/models")
-                };
-                (
-                    probe_url,
-                    r.transport.auth_header,
-                    r.transport.auth_scheme,
-                    r.transport.headers,
-                )
+    // Derive the probe URL: snapshot transport first, then connection's own baseUrl.
+    let (models_url, auth_header, auth_scheme, extra_headers) = match crate::snapshot::resolve(&format!("{provider}/__probe__")) {
+        Some(r) => {
+            let base = r.transport.base_url.trim_end_matches('/').to_string();
+            let mu = base.trim_end_matches("/chat/completions").trim_end_matches("/completions").to_string();
+            let probe_url = if provider == "openrouter" {
+                "https://openrouter.ai/api/v1/auth/key".to_string()
+            } else {
+                format!("{mu}/models")
+            };
+            (probe_url, r.transport.auth_header, r.transport.auth_scheme, r.transport.headers)
+        }
+        None => {
+            // Fallback: use the connection's own baseUrl from its data blob.
+            let base = conn.get("baseUrl").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            if base.is_empty() || base == "none" {
+                return error_response(StatusCode::NOT_IMPLEMENTED, "No probe URL available for this provider");
             }
-            None => {
-                // No native transport in the snapshot — we can't probe generically.
-                return error_response(
-                    StatusCode::NOT_IMPLEMENTED,
-                    "Connection test not supported for this provider (no native transport)",
-                );
-            }
-        };
+            let mu = base.trim_end_matches('/').trim_end_matches("/chat/completions").to_string();
+            (format!("{mu}/models"), "authorization".to_string(), "bearer".to_string(), std::collections::HashMap::new())
+        }
+    };
 
     let client = &state.client;
     // Build the full header set up front (reqwest consumes it via .headers()).
@@ -296,7 +287,7 @@ pub async fn providers_test(State(state): State<AppState>, Path(id): Path<String
     ) {
         hdrs.insert(name, val);
     }
-    for (k, v) in &headers {
+    for (k, v) in &extra_headers {
         if let (Ok(name), Ok(val)) = (
             axum::http::HeaderName::try_from(k.as_str()),
             axum::http::HeaderValue::from_str(v),
