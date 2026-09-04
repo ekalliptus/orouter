@@ -77,6 +77,13 @@ export class BaseExecutor {
 
   // Override in subclass for provider-specific transformations
   transformRequest(model, body, stream, credentials) {
+    // Ensure min tokens for reasoning models (e.g. GLM / DeepSeek)
+    if (body && typeof body === "object") {
+      const minTokens = this.config?.transport?.minMaxTokens || 4096;
+      if (typeof body.max_tokens === "number" && body.max_tokens < minTokens) {
+        body.max_tokens = minTokens;
+      }
+    }
     return body;
   }
 

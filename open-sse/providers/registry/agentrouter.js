@@ -24,12 +24,13 @@ export default {
     baseUrl: "https://seekai.cc/v1/chat/completions",
     validateUrl: "https://seekai.cc/v1/models",
     thinkingFormat: "openai",
+    minMaxTokens: 4096,
   },
   models: [
     { id: "minimax-m3", name: "MiniMax M3" },
     { id: "kimi-k3", name: "Kimi K3" },
     { id: "mimo-v2.5", name: "Mimo v2.5" },
-    { id: "glm-5.3-flash", name: "GLM-5.3 Flash" },
+    { id: "glm-5.3-flash", name: "GLM-5.3 Flash", maxOutputTokens: 8192 },
   ],
 };
 
