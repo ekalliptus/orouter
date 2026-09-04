@@ -123,7 +123,6 @@ import p120 from "./fish-audio.js";
 import p121 from "./alitp-intl.js";
 // ORouter custom providers (not in upstream 9router — re-add after every upstream sync)
 import p122 from "./agentrouter.js";
-import p123 from "./seekai.js";
 
 export default [
   p0,
@@ -247,5 +246,4 @@ export default [
   p120,
   p121,
   p122,
-  p123,
 ];

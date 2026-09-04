@@ -1,7 +1,7 @@
 // SeekAI — OpenAI-compatible unified LLM gateway (seekai.cc).
 // Replaces AgentRouter as the user's preferred gateway.
 export default {
-  id: "agentrouter",
+  id: "seekai",
   priority: 105,
   alias: "seekai",
   aliases: ["sa", "agentrouter", "ar"],
@@ -27,12 +27,9 @@ export default {
   },
   models: [
     { id: "minimax-m3", name: "MiniMax M3" },
-    { id: "grok-4.6", name: "Grok 4.6" },
     { id: "kimi-k3", name: "Kimi K3" },
     { id: "mimo-v2.5", name: "Mimo v2.5" },
     { id: "glm-5.3-flash", name: "GLM-5.3 Flash" },
-    { id: "deepseek-v4-flash-vision-exp", name: "DeepSeek V4 Flash Vision" },
-    { id: "deepseek-v4-flash", name: "DeepSeek V4 Flash" },
   ],
 };
 
