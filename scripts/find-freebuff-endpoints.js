@@ -1,6 +1,6 @@
-// Dump every occurrence of the identifier CH$ in the binary with context,
-// so we can determine what it resolves to (declaration may be far away or
-// use a different minified local name per chunk).
+// Locate where the Freebuff binary adds runId to chat completion requests.
+// Search for "runId" occurrences near "chat/completions" call sites and
+// request-body assembly, then print the surrounding context.
 
 const fs = require('fs');
 const os = require('os');
@@ -10,19 +10,13 @@ const exePath = path.join(os.homedir(), '.config', 'manicode', 'freebuff.exe');
 const buffer = fs.readFileSync(exePath);
 const str = buffer.toString('utf8');
 
-const identifier = 'CH$';
-let pos = 0;
-let count = 0;
-
-while (count < 15) {
-  const idx = str.indexOf(identifier, pos);
-  if (idx === -1) break;
-  const before = idx > 0 ? str[idx - 1] : '';
-  if (!/[A-Za-z0-9_$]/.test(before)) {
-    const snippet = str.slice(Math.max(0, idx - 60), idx + 120);
-    console.log('@' + idx + ': ' + snippet.replace(/[\x00-\x1f]/g, ' '));
-    count += 1;
-  }
-  pos = idx + identifier.length;
+const needle = 'No runId found in request body';
+let idx = str.indexOf(needle);
+if (idx === -1) {
+  console.log('error message not found in binary');
+  process.exit(0);
 }
-console.log('Total shown:', count);
+
+// Print context before the validation to see which field is being read
+console.log('=== context around "No runId found in request body" ===');
+console.log(str.slice(Math.max(0, idx - 1200), idx + 300).replace(/[\x00-\x1f]/g, ' '));
