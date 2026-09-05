@@ -23,25 +23,22 @@ export default {
   authModes: ["apikey"],
   serviceKinds: ["llm"],
   transport: {
-    // Freebuff is a Codebuff rebrand: the CLI binary posts chat requests to
-    // codebuff.com/api/v1/chat/completions (verified in freebuff.exe — the
-    // url builder is path.join("/api/v1", "/chat/completions") on FP() base).
-    // Auth = Bearer token from `freebuff login` (stored in
-    // ~/.config/manicode/auth.json / CODEBUFF_API_KEY env).
-    baseUrl: "https://www.codebuff.com/api/v1/chat/completions",
-    validateUrl: "https://www.codebuff.com/api/v1/me",
-    // Their backend mirrors the exact UA the CLI sends (ai-sdk/openai-compatible/x/codebuff).
-    headers: {
-      "User-Agent": "ai-sdk/openai-compatible/1.0.0/codebuff",
-    },
+    // Freebuff's free tier is gated to its own CLI runtime, so direct API
+    // calls get 403 free_mode_invalid_agent_model. The community router
+    // freebuff2api (npm) runs the real Freebuff protocol locally and exposes
+    // an OpenAI-compatible surface — point this provider at it:
+    //   npm i -g freebuff2api && set FREEBUFF_TOKEN=<freebuff login token>
+    //   freebuff2api   (serves http://127.0.0.1:8787/v1)
+    baseUrl: "http://127.0.0.1:8787/v1/chat/completions",
+    validateUrl: "http://127.0.0.1:8787/v1/models",
     thinkingFormat: "openai",
     minMaxTokens: 4096,
   },
   models: [
-    { id: "deepseek-v4-flash", name: "DeepSeek V4 Flash (07/31)", default: true },
-    { id: "glm-5.3-flash", name: "GLM 5.3 Flash", maxOutputTokens: 8192 },
-    { id: "gpt-5.6-luna", name: "GPT-5.6 Luna" },
-    { id: "mimo-v2.5", name: "MiMo 2.5" },
-    { id: "solar-pro-4", name: "Solar Pro 4" },
+    { id: "mimo/mimo-v2.5", name: "MiMo 2.5 (Freebuff)" },
+    { id: "deepseek/deepseek-v4-flash", name: "DeepSeek V4 Flash (Freebuff)" },
+    { id: "minimax/minimax-m3", name: "MiniMax M3 (Freebuff)" },
+    { id: "openai/gpt-5.6-luna", name: "GPT-5.6 Luna (Freebuff)" },
+    { id: "deepseek/deepseek-v4-pro", name: "DeepSeek V4 Pro (Freebuff)" },
   ],
 };
