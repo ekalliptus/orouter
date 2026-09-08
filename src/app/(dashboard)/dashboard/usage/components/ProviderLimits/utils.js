@@ -363,10 +363,55 @@ export function parseQuotaData(provider, data) {
 
       case "antigravity":
         if (data.quotas) {
-          Object.entries(data.quotas).forEach(([modelKey, quota]) => {
+          const entries = Object.entries(data.quotas);
+          const geminiModels = entries.filter(([k]) => k.startsWith("gemini-") && !k.includes("image"));
+          const claudeModels = entries.filter(([k]) => k.startsWith("claude-"));
+          const imageModels = entries.filter(([k]) => k.includes("image"));
+          const otherModels = entries.filter(([k]) => !k.startsWith("gemini-") && !k.startsWith("claude-") && !k.includes("image"));
+
+          if (geminiModels.length > 0) {
+            const minGemini = geminiModels.reduce((min, curr) =>
+              (curr[1].remainingPercentage ?? 100) < (min[1].remainingPercentage ?? 100) ? curr : min
+            )[1];
+            normalizedQuotas.push({
+              name: "Gemini (Flash / Pro)",
+              modelKey: "gemini",
+              used: minGemini.used || 0,
+              total: minGemini.total || 0,
+              resetAt: minGemini.resetAt || null,
+              remainingPercentage: minGemini.remainingPercentage,
+            });
+          }
+
+          if (claudeModels.length > 0) {
+            const minClaude = claudeModels.reduce((min, curr) =>
+              (curr[1].remainingPercentage ?? 100) < (min[1].remainingPercentage ?? 100) ? curr : min
+            )[1];
+            normalizedQuotas.push({
+              name: "Claude (Sonnet / Opus)",
+              modelKey: "claude",
+              used: minClaude.used || 0,
+              total: minClaude.total || 0,
+              resetAt: minClaude.resetAt || null,
+              remainingPercentage: minClaude.remainingPercentage,
+            });
+          }
+
+          otherModels.forEach(([modelKey, quota]) => {
             normalizedQuotas.push({
               name: quota.displayName || modelKey,
-              modelKey: modelKey, // Keep modelKey for sorting
+              modelKey: modelKey,
+              used: quota.used || 0,
+              total: quota.total || 0,
+              resetAt: quota.resetAt || null,
+              remainingPercentage: quota.remainingPercentage,
+            });
+          });
+
+          imageModels.forEach(([modelKey, quota]) => {
+            normalizedQuotas.push({
+              name: quota.displayName || modelKey,
+              modelKey: modelKey,
               used: quota.used || 0,
               total: quota.total || 0,
               resetAt: quota.resetAt || null,
