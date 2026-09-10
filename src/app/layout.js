@@ -1,5 +1,4 @@
 import { GoogleAnalytics } from "@next/third-parties/google";
-import "material-symbols/outlined.css";
 import "./globals.css";
 import { ThemeProvider } from "@/shared/components/ThemeProvider";
 import "@/lib/network/initOutboundProxy"; // Auto-initialize outbound proxy env
@@ -28,6 +27,9 @@ export const viewport = {
 export default function RootLayout({ children }) {
   return (
     <html lang="en" suppressHydrationWarning>
+      <head>
+        <link rel="preload" href="/material-symbols-outlined.woff2" as="font" type="font/woff2" crossOrigin="anonymous" />
+      </head>
       <body className="font-sans antialiased">
         <ThemeProvider>
           <RuntimeI18nProvider>

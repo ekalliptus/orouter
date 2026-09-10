@@ -150,6 +150,13 @@
 .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
 .scroll-thin-x::-webkit-scrollbar { height: 4px; }
 .custom-scrollbar::-webkit-scrollbar-thumb, .scroll-thin-x::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 20px; }
+@font-face {
+  font-family: 'Material Symbols Outlined';
+  font-style: normal;
+  font-weight: 100 700;
+  font-display: swap;
+  src: url('/material-symbols-outlined.woff2') format('woff2');
+}
 .material-symbols-outlined {
   font-family: 'Material Symbols Outlined', sans-serif;
   font-weight: normal; font-style: normal; font-size: 24px; line-height: 1;
