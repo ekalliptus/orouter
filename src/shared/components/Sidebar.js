@@ -110,21 +110,16 @@ export default function Sidebar({ onClose }) {
 
   return (
     <>
-      <aside className="aurora-glass-strong flex min-h-full w-72 flex-col border-r border-border-subtle bg-sidebar transition-colors duration-300">
-        {/* Traffic lights */}
-        <div className="flex items-center gap-2 px-6 pt-5 pb-2">
-          <div className="w-3 h-3 rounded-full bg-[#FF5F56]" />
-          <div className="w-3 h-3 rounded-full bg-[#FFBD2E]" />
-          <div className="w-3 h-3 rounded-full bg-[#27C93F]" />
-        </div>
+      <aside className="dashboard-sidebar flex h-dvh w-64 flex-col border-r border-border-subtle bg-sidebar">
 
         {/* Logo */}
-        <div className="px-6 py-4 flex flex-col gap-2">
+        <div className="px-5 py-6 flex flex-col gap-2">
+          {onClose && <button type="button" onClick={onClose} aria-label="Close navigation" className="self-end size-9 flex items-center justify-center rounded-lg hover:bg-surface-2"><span className="material-symbols-outlined">close</span></button>}
           <Link href="/dashboard" prefetch={false} className="flex items-center gap-3">
             <Logo size={36} />
             <div className="flex flex-col">
-              <h1 className="text-lg font-extrabold tracking-tight text-text-main uppercase">ORouter</h1>
-              <span className="console-label text-emerald-600 dark:text-emerald-400">Control Plane · Online</span>
+              <span className="text-xl font-semibold tracking-tight text-text-main">ORouter</span>
+              <span className="text-xs text-text-muted">AI routing workspace</span>
               <span className="text-[10px] text-text-muted">v{APP_CONFIG.version}</span>
             </div>
           </Link>
@@ -190,6 +185,7 @@ export default function Sidebar({ onClose }) {
             {/* Media Providers accordion */}
             <button
               onClick={() => setMediaOpen((v) => !v)}
+              aria-expanded={mediaOpen}
               className={cn(
                 "w-full flex items-center gap-3 px-3 py-1 rounded-lg transition-all group",
                 pathname.startsWith("/dashboard/media-providers")

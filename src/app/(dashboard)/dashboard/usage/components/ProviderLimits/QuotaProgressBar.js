@@ -4,8 +4,6 @@ import { cn } from "@/shared/utils/cn";
 import { formatResetTime } from "./utils";
 
 // Calculate color based on remaining percentage.
-// Neobrutalist palette: bold flat fills (600 scale) + solid track, so the bar
-// reads as confident/tegak rather than the washed-out /10 translucent fills.
 const getColorClasses = (remainingPercentage) => {
   if (remainingPercentage > 70) {
     return {
@@ -100,22 +98,19 @@ export default function QuotaProgressBar({
         </div>
       </div>
 
-      {/* Progress bar — neobrutalist: thicker, solid bold fill, hard black border + offset shadow.
-          The track is rounded-full (preserved by the global exception) so it stays a pill, but
-          the border + shadow give it the tegak/confident read the old translucent /10 lacked. */}
       {!unlimited && (
         <div
-          className={cn(
-            "relative h-3.5 w-full overflow-hidden border-2 border-black bg-white shadow-[3px_3px_0_0_#000]",
-            "dark:bg-neutral-900"
-          )}
+          role="progressbar"
+          aria-label={label || "Quota remaining"}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.max(0, Math.min(remaining, 100))}
+          className="h-2 w-full overflow-hidden rounded-full bg-surface-3"
         >
           <div
-            className={cn("h-full !rounded-none transition-all duration-300", colors.bg)}
-            style={{ width: `${Math.min(remaining, 100)}%` }}
+            className={cn("h-full rounded-full transition-[width] duration-300", colors.bg)}
+            style={{ width: `${Math.max(0, Math.min(remaining, 100))}%` }}
           />
-          {/* subtle inner track tint so the unfilled portion isn't pure white */}
-          <div className={cn("pointer-events-none absolute inset-0 -z-0", colors.bgLight)} />
         </div>
       )}
 

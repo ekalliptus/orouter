@@ -2,6 +2,8 @@
 
 import { useState, useEffect } from "react";
 import { Card, Button, Input } from "@/shared/components";
+import Logo from "@/shared/components/Logo";
+import ThemeToggle from "@/shared/components/ThemeToggle";
 
 export default function LoginPage() {
   const [password, setPassword] = useState("");
@@ -150,12 +152,12 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-bg p-4 relative overflow-hidden">
-      {/* Faint grid background */}
-      <div className="landing-grid absolute inset-0 pointer-events-none" aria-hidden="true" />
-      <div className="relative z-10 w-full max-w-md">
-        <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-primary mb-2">ORouter</h1>
+    <div className="min-h-dvh flex items-center justify-center bg-bg px-5 py-20 relative">
+      <div className="absolute right-5 top-5"><ThemeToggle /></div>
+      <main className="w-full max-w-md">
+        <div className="mb-8">
+          <div className="flex items-center gap-3 mb-8"><Logo size={40} /><span className="text-xl font-semibold tracking-tight">ORouter</span></div>
+          <h1 className="text-3xl font-semibold tracking-tight text-text-main mb-3">Your routing workspace.</h1>
           <p className="text-text-muted">
             {samlAvailable
               ? "Sign in with SAML 2.0 Single Sign-On"
@@ -172,8 +174,9 @@ export default function LoginPage() {
                 Set a new password before accessing the dashboard remotely.
               </p>
               <div className="flex flex-col gap-2">
-                <label className="text-sm font-medium">New password</label>
                 <Input
+                  label="New password"
+                  autoComplete="new-password"
                   type="password"
                   placeholder="Enter new password"
                   value={newPassword}
@@ -218,8 +221,9 @@ export default function LoginPage() {
                 )}
 
                 <div className="flex flex-col gap-2">
-                  <label className="text-sm font-medium">Password</label>
                   <Input
+                    label="Password"
+                    autoComplete="current-password"
                     type="password"
                     placeholder="Enter password"
                     value={password}
@@ -265,7 +269,7 @@ export default function LoginPage() {
           </div>
           )}
         </Card>
-      </div>
+      </main>
     </div>
   );
 }
