@@ -163,7 +163,7 @@ export function getHeadroomLogTail(maxLines = 200) {
 // is rejected to keep the install surface predictable. Always installs the
 // `proxy` base + whatever extras the user picked, regardless of what is
 // already present.
-export async function installHeadroomExtras(extras = []) {
+export async function installHeadroomExtras(extras = [], restartOpts = null) {
   const requested = Array.isArray(extras) ? extras.filter((e) => HEADROOM_COMPRESSION_EXTRAS.includes(e)) : [];
   const py = findPython310();
   if (!py) {
@@ -176,6 +176,19 @@ export async function installHeadroomExtras(extras = []) {
     err.code = "NOT_INSTALLED";
     throw err;
   }
+
+  // Stop the running proxy first: pip must replace headroom.exe, and on
+  // Windows the running process locks that exact file (WinError 32).
+  const wasRunning = getManagedPid() !== null;
+  const opts = restartOpts || { port: DEFAULT_PORT, codeAware: false, kompress: true };
+  if (wasRunning) {
+    stopHeadroomProxy();
+    // Give the OS a moment to release the executable lock.
+    for (let i = 0; i < 20 && getManagedPid() !== null; i++) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+  }
+
   // pip install string is built from a closed set (HEADROOM_COMPRESSION_EXTRAS),
   // so it cannot be poisoned by caller input — the comma-list is a fixed
   // ['proxy', ...requested]. No shell interpolation.
@@ -194,11 +207,19 @@ export async function installHeadroomExtras(extras = []) {
 
   return new Promise((resolve, reject) => {
     child.once("error", (e) => { fs.closeSync(outFd); reject(e); });
-    child.once("exit", (code) => {
+    child.once("exit", async (code) => {
       fs.closeSync(outFd);
       if (code === 0) {
         const status = getInstalledHeadroomExtras(py);
-        resolve({ success: true, code, spec, extras: requested, ...status });
+        // Restart the proxy if it was running before the upgrade so the
+        // dashboard lands back on "Running" without a manual Start.
+        let restarted = null;
+        if (wasRunning) {
+          try {
+            restarted = await startHeadroomProxy(opts);
+          } catch { /* surfaced via status; user can Start manually */ }
+        }
+        resolve({ success: true, code, spec, extras: requested, restarted: Boolean(restarted), ...status });
       } else {
         const err = new Error(`pip install exited with code=${code} — see headroom/install.log`);
         err.code = "INSTALL_FAILED";
