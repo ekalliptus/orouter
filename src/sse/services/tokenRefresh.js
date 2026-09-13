@@ -1,5 +1,5 @@
 // Re-export from open-sse with local logger
-import * as log from "../utils/logger.js";
+import * as log from "../utils/logger.mjs";
 import { updateProviderConnection } from "../../lib/localDb.js";
 import {
   getProjectIdForConnection,
