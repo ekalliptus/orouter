@@ -32,9 +32,16 @@ function clearPid() {
 }
 
 // process.kill throws if pid is dead — use this to probe.
+// EPERM means the pid exists but is owned by another user/elevated context —
+// treat it as alive rather than dead.
 export function isPidAlive(pid) {
   if (!pid || typeof pid !== "number") return false;
-  try { process.kill(pid, 0); return true; } catch { return false; }
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e.code === "EPERM";
+  }
 }
 
 export function getManagedPid() {
