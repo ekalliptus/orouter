@@ -95,3 +95,6 @@ vps-backup/
 vue-web/dist/
 
 vue-web/node_modules/
+.next-previous-build/
+.build-redesign.log
+.build-data/
