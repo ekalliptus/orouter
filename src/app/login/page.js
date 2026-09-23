@@ -152,12 +152,20 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-dvh flex items-center justify-center bg-bg px-5 py-20 relative">
-      <div className="absolute right-5 top-5"><ThemeToggle /></div>
-      <main className="w-full max-w-md">
+    <div className="min-h-dvh flex items-center justify-center bg-bg px-5 py-20 relative overflow-hidden">
+      {/* Quiet grid plane with a single green horizon glow — the console's front door. */}
+      <div aria-hidden="true" className="grid-backdrop absolute inset-0 pointer-events-none" />
+      <div aria-hidden="true" className="horizon-glow absolute inset-0 pointer-events-none" />
+      <div className="absolute right-5 top-5 z-10"><ThemeToggle /></div>
+      <main className="w-full max-w-md relative z-10">
         <div className="mb-8">
-          <div className="flex items-center gap-3 mb-8"><Logo size={40} /><span className="text-xl font-semibold tracking-tight">ORouter</span></div>
-          <h1 className="text-3xl font-semibold tracking-tight text-text-main mb-3">Your routing workspace.</h1>
+          <div className="flex items-center gap-3 mb-8">
+            <Logo size={40} />
+            <span className="font-mono uppercase tracking-[0.14em] text-lg font-semibold">ORouter</span>
+          </div>
+          <h1 className="font-mono uppercase tracking-[0.04em] text-2xl sm:text-3xl font-semibold text-text-main mb-3 leading-tight">
+            Your routing workspace.
+          </h1>
           <p className="text-text-muted">
             {samlAvailable
               ? "Sign in with SAML 2.0 Single Sign-On"

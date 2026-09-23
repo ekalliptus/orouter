@@ -17,8 +17,8 @@ export default function Input({ label, type = "text", placeholder, value, onChan
           disabled={disabled} required={required} aria-invalid={error ? true : undefined}
           aria-describedby={error || hint ? descriptionId : undefined}
           className={cn(
-            "w-full min-h-10 py-2.5 px-3 text-text-main bg-surface rounded-lg border border-border placeholder:text-text-subtle",
-            "focus:outline-none focus:ring-2 focus:ring-primary/25 focus:border-primary transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-[16px] sm:text-sm",
+            "w-full min-h-10 py-2.5 px-3 text-text-main bg-surface-2/60 rounded-lg border border-border placeholder:text-text-subtle",
+            "focus:outline-none focus:ring-2 focus:ring-primary/25 focus:border-primary/70 focus:bg-surface transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-[16px] sm:text-sm",
             icon && "pl-10", error && "border-danger", inputClassName
           )}
           {...props}

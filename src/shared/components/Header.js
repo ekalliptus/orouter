@@ -244,7 +244,7 @@ export default function Header({ onMenuClick, showMenuButton = true }) {
                 {crumb.href ? (
                   <Link
                     href={crumb.href}
-                    className="text-text-muted hover:text-primary transition-colors"
+                    className="font-mono text-xs uppercase tracking-[0.08em] text-text-muted hover:text-primary transition-colors"
                   >
                     {crumb.label}
                   </Link>
@@ -259,7 +259,7 @@ export default function Header({ onMenuClick, showMenuButton = true }) {
                         fallbackText={crumb.label.slice(0, 2).toUpperCase()}
                       />
                     )}
-                    <h1 className="text-base lg:text-2xl font-semibold text-text-main tracking-tight truncate">
+                    <h1 className="font-mono uppercase tracking-[0.08em] text-sm lg:text-lg font-semibold text-text-main truncate">
                       {translate(crumb.label)}
                     </h1>
                   </div>
@@ -269,13 +269,13 @@ export default function Header({ onMenuClick, showMenuButton = true }) {
           </div>
         ) : title ? (
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2.5">
               {icon && (
-                <span className="material-symbols-outlined text-primary text-xl lg:text-2xl">
+                <span className="material-symbols-outlined text-primary text-lg lg:text-xl">
                   {icon}
                 </span>
               )}
-              <h1 className="text-base lg:text-2xl font-semibold tracking-tight truncate">
+              <h1 className="font-mono uppercase tracking-[0.08em] text-sm lg:text-lg font-semibold truncate">
                 {translate(title)}
               </h1>
             </div>
@@ -297,7 +297,7 @@ export default function Header({ onMenuClick, showMenuButton = true }) {
           >
             <span className="material-symbols-outlined text-[14px] mr-1.5 text-primary">person</span>
             <span className="truncate">{displayName}</span>
-            <span className="ml-2 shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
+            <span className="ml-2 shrink-0 rounded-full bg-primary/10 px-2 py-0.5 font-mono text-[10px] font-medium tracking-wide text-primary">
               {loginMethod}
             </span>
           </div>
@@ -330,7 +330,7 @@ function HeaderSearch() {
         onChange={(e) => setQuery(e.target.value)}
         placeholder={placeholder}
         aria-label={placeholder || "Search this page"}
-        className="w-full h-8 pl-7 pr-7 rounded-lg border border-border bg-surface/60 text-sm focus:outline-none focus:border-primary/50 transition-colors"
+        className="w-full h-8 pl-7 pr-7 rounded-lg border border-border bg-surface-2/60 text-xs font-mono placeholder:text-text-subtle focus:outline-none focus:ring-2 focus:ring-primary/25 focus:border-primary/70 transition-colors"
       />
       {query && (
         <button

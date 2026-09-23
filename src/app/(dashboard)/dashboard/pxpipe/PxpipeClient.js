@@ -143,7 +143,7 @@ export default function PxpipeClient() {
                 className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
                   windowId === tab.id
                     ? "bg-primary text-white shadow-sm"
-                    : "text-text-muted hover:text-text hover:bg-bg-hover"
+                    : "text-text-muted hover:text-text-main hover:bg-surface-3/60"
                 }`}
               >
                 {tab.label}

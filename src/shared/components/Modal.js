@@ -33,11 +33,11 @@ export default function Modal({ isOpen, onClose, title, children, footer, size =
           if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) onClose();
         }
       }}
-      className={cn("fixed inset-0 m-auto w-[calc(100%-2rem)] max-h-[90dvh] overflow-hidden bg-surface text-text-main border border-border-subtle rounded-2xl shadow-elev backdrop:bg-black/45", sizes[size], className)}
+      className={cn("fixed inset-0 m-auto w-[calc(100%-2rem)] max-h-[90dvh] overflow-hidden bg-surface text-text-main border border-border-subtle rounded-xl shadow-elev backdrop:bg-black/60", sizes[size], className)}
     >
       {(title || showTrafficLights) && (
         <div className="flex items-center justify-between gap-4 px-5 py-4 border-b border-border-subtle">
-          <h2 id={titleId} className="text-lg font-semibold">{title}</h2>
+          <h2 id={titleId} className="font-mono uppercase tracking-[0.06em] text-base font-semibold">{title}</h2>
           <button type="button" onClick={onClose} aria-label="Close" className="size-9 shrink-0 flex items-center justify-center rounded-lg text-text-muted hover:bg-surface-2">
             <span aria-hidden="true" className="material-symbols-outlined text-[20px]">close</span>
           </button>

@@ -116,7 +116,7 @@ export default function Sidebar({ onClose }) {
             <div className="flex flex-col">
               <span className="text-xl font-semibold tracking-tight text-text-main">ORouter</span>
               <span className="text-xs text-text-muted">AI routing workspace</span>
-              <span className="text-[10px] text-text-muted">v{APP_CONFIG.version}</span>
+              <span className="text-[10px] font-mono text-text-subtle tracking-wide">v{APP_CONFIG.version}</span>
             </div>
           </Link>
           {updateInfo && (
@@ -154,9 +154,9 @@ export default function Sidebar({ onClose }) {
               prefetch={false}
               onClick={onClose}
               className={cn(
-                "group relative flex items-center gap-3 rounded-lg border border-transparent px-3 py-1.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/55",
+                "group relative flex items-center gap-3 rounded-lg border border-transparent px-3 py-1.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60",
                 isActive(item.href)
-                  ? "border-brand-500/20 bg-brand-500/10 text-brand-600 before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-brand-500 dark:text-brand-300"
+                  ? "border-primary/25 bg-primary/10 text-primary before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-primary"
                   : "text-text-muted hover:bg-surface-2/70 hover:text-text-main"
               )}
             >
@@ -174,7 +174,7 @@ export default function Sidebar({ onClose }) {
 
           {/* System section */}
           <div className="pt-3 mt-2 space-y-0.5">
-            <p className="console-label mb-2 px-4">
+            <p className="data-label mb-2 px-4">
               System
             </p>
 
@@ -185,7 +185,7 @@ export default function Sidebar({ onClose }) {
               className={cn(
                 "w-full flex items-center gap-3 px-3 py-1 rounded-lg transition-all group",
                 pathname.startsWith("/dashboard/media-providers")
-                  ? "border-brand-500/20 bg-brand-500/10 text-brand-600 before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-brand-500 dark:text-brand-300"
+                  ? "border-primary/25 bg-primary/10 text-primary"
                   : "text-text-muted hover:bg-surface-2/70 hover:text-text-main"
               )}
             >
@@ -239,7 +239,7 @@ export default function Sidebar({ onClose }) {
                 prefetch={false}
                 onClick={onClose}
                 className={cn(
-                  "group relative flex items-center gap-3 rounded-lg border border-transparent px-3 py-1.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/55",
+                  "group relative flex items-center gap-3 rounded-lg border border-transparent px-3 py-1.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60",
                   isActive(item.href)
                     ? "bg-primary/10 text-primary"
                     : "text-text-muted hover:bg-surface-2 hover:text-text-main"
@@ -267,7 +267,7 @@ export default function Sidebar({ onClose }) {
                   prefetch={false}
                   onClick={onClose}
                   className={cn(
-                    "group relative flex items-center gap-3 rounded-lg border border-transparent px-3 py-1.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/55",
+                    "group relative flex items-center gap-3 rounded-lg border border-transparent px-3 py-1.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60",
                     isActive(item.href)
                       ? "bg-primary/10 text-primary"
                       : "text-text-muted hover:bg-surface-2 hover:text-text-main"
@@ -292,9 +292,9 @@ export default function Sidebar({ onClose }) {
               prefetch={false}
               onClick={onClose}
               className={cn(
-                "group relative flex items-center gap-3 rounded-lg border border-transparent px-3 py-1.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/55",
+                "group relative flex items-center gap-3 rounded-lg border border-transparent px-3 py-1.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60",
                 isActive("/dashboard/profile")
-                  ? "border-brand-500/20 bg-brand-500/10 text-brand-600 before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-brand-500 dark:text-brand-300"
+                  ? "border-primary/25 bg-primary/10 text-primary before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-primary"
                   : "text-text-muted hover:bg-surface-2/70 hover:text-text-main"
               )}
             >

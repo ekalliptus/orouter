@@ -12,7 +12,7 @@ export function Spinner({ size = "md", className }) {
   return (
     <span
       className={cn(
-        "material-symbols-outlined animate-spin text-brand-500 dark:text-emerald-400",
+        "material-symbols-outlined animate-spin text-primary",
         sizes[size],
         className
       )}

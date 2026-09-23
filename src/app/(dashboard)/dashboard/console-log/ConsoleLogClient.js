@@ -70,18 +70,24 @@ export default function ConsoleLogClient() {
 
   return (
     <div className="">
-      <Card>
-        <div className="flex items-center justify-end px-4 pt-3 pb-2">
+      <Card padding="none" className="overflow-hidden">
+        <div className="flex items-center justify-between gap-3 px-4 py-2.5 border-b border-border-subtle bg-surface-2/60">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="relative flex size-2 shrink-0">
+              <span className={`absolute inline-flex h-full w-full rounded-full ${connected ? "bg-success live-dot" : "bg-danger"}`} />
+            </span>
+            <span className="data-label truncate">{connected ? "stream live" : "stream offline"}</span>
+          </div>
           <Button size="sm" variant="outline" icon="delete" onClick={handleClear}>
             Clear
           </Button>
         </div>
         <div
           ref={logRef}
-          className="bg-black rounded-b-lg p-4 text-xs font-mono h-[calc(100vh-220px)] overflow-y-auto"
+          className="terminal-screen custom-scrollbar p-4 text-xs font-mono h-[calc(100vh-220px)] overflow-y-auto"
         >
           {logs.length === 0 ? (
-            <span className="text-text-muted">No console logs yet.</span>
+            <span className="text-text-subtle">No console logs yet.</span>
           ) : (
             <div className="space-y-0.5">
               {logs.map((line, i) => (

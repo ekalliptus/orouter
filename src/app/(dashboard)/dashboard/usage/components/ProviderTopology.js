@@ -101,7 +101,7 @@ function RouterNode({ data }) {
     <div
       className={`relative z-[1] flex items-center justify-center px-5 py-3 rounded-xl border-2 min-w-[130px] ${
         powering
-          ? "topology-router-core border-yellow-300 bg-gradient-to-br from-primary/30 via-yellow-400/20 to-cyan-400/25"
+          ? "topology-router-core border-[color:var(--color-chart-line)] bg-gradient-to-br from-primary/20 via-indigo-500/15 to-cyan-400/15"
           : "border-primary bg-primary/5 shadow-md"
       }`}
     >
@@ -117,11 +117,11 @@ function RouterNode({ data }) {
         loading="lazy"
         decoding="async"
       />
-      <span className={`text-sm font-bold ${powering ? "topology-router-label text-yellow-300" : "text-primary"}`}>
+      <span className={`font-mono text-sm font-bold ${powering ? "topology-router-label text-[color:var(--color-chart-line)]" : "text-primary"}`}>
         ORouter
       </span>
       {data.activeCount > 0 && (
-        <span className="ml-2 px-1.5 py-0.5 rounded-full bg-yellow-400 text-black text-xs font-bold topology-router-badge">
+        <span className="ml-2 px-1.5 py-0.5 rounded-full bg-[color:var(--color-chart-line)] text-white font-mono text-xs font-bold topology-router-badge">
           {data.activeCount}
         </span>
       )}

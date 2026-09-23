@@ -25,7 +25,7 @@ export default function Select({
       {label && (
         <label htmlFor={selectId} className="text-sm font-medium text-text-main">
           {label}
-          {required && <span className="text-red-500 ml-1">*</span>}
+          {required && <span className="text-danger ml-1">*</span>}
         </label>
       )}
       <div className="relative">
@@ -38,11 +38,11 @@ export default function Select({
           disabled={disabled}
           className={cn(
             "w-full py-2.5 px-3 pr-10 text-sm text-text-main",
-            "bg-surface border border-border rounded-lg appearance-none",
-            "focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-500/40",
+            "bg-surface-2/60 border border-border rounded-lg appearance-none",
+            "focus:outline-none focus:ring-2 focus:ring-primary/25 focus:border-primary/70 focus:bg-surface",
             "transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed",
             "text-[16px] sm:text-sm",
-            error && "ring-1 ring-red-500 focus:ring-2 focus:ring-red-500/40 border-red-500/40",
+            error && "ring-1 ring-danger focus:ring-2 focus:ring-danger/40 border-danger",
             selectClassName
           )}
           {...props}
@@ -61,7 +61,7 @@ export default function Select({
         </div>
       </div>
       {error && (
-        <p className="text-xs text-red-500 flex items-center gap-1">
+        <p className="text-xs text-danger flex items-center gap-1">
           <span className="material-symbols-outlined text-[14px]">error</span>
           {error}
         </p>

@@ -1,73 +1,129 @@
+/* ============================================================================
+   ORouter design system — "Signal Console"
+   ----------------------------------------------------------------------------
+   DESIGN PLAN (grounded in the reference dashboard screenshot, 2026-09):
+
+   Concept: a routing operations console. The dashboard reads as an instrument
+   panel for live AI traffic: a deep ink-navy field, compact hairline panels,
+   and color reserved almost exclusively for live data.
+
+   Palette (dark, first-class):
+     --color-bg        #0A0F1D  page field (deep ink navy)
+     --color-surface   #111A30  panel navy (stat cards, cards)
+     --color-surface-2 #17223C  raised chrome (table heads, hovers)
+     --color-surface-3 #1E2B49  highest lift (inputs, active chips)
+     --color-sidebar   #070C18  darker rail than the page field
+     --color-border    #243356  hairline
+     --color-text-main #E9EFFB  primary text
+     primary/accent    #3FD684  live-signal green (the one glow)
+     info              #7AA2FF  input tokens / links (reference blue)
+     chart             #8B8DF8  violet for series + topology hub
+     warning           #F5C044  cost amber
+     danger            #F3796F  error red
+
+   Palette (light, "daylight ops"): cool paper neutrals (#F4F6FA field, white
+   surfaces), same signal green deepened to #147044 for AA contrast. Structure
+   identical; the glow steps down to plain color.
+
+   Type roles (two voices, one family each):
+     - Machine voice: mono stack (Cascadia Mono / JetBrains Mono / Consolas).
+       Everything the machine produces: stat values, model names, endpoints,
+       tokens, logs, page titles (upper, tracked), table numerics, badges.
+     - Human voice: Segoe UI sans. Everything a person reads in prose:
+       descriptions, form labels, navigation, buttons.
+     Stat values 22-30px mono semibold tabular; data labels 11px mono
+     uppercase +0.08em; body 14px.
+
+   Layout: unchanged architecture (fixed rail + header strip + scroll region),
+   tightened. Header becomes a console strip with a mono tracked title. Stat
+   cards are compact: label above, mono value below. Tables dense, tabular
+   numerals. Left-aligned throughout; numbers right-aligned in tables.
+
+   Principles:
+     1. Data glows, chrome recedes — saturated color only for live data.
+     2. Two voices — mono for machine output, sans for human guidance.
+     3. Hairline discipline — 1px borders, surface steps for depth, no heavy
+        shadows in dark mode.
+     4. One hero per view — the live topology/chart carries the motion budget.
+     5. Dark first, light intact — light theme is the same instrument in
+        daylight, never an afterthought inversion.
+   ========================================================================== */
+
 /* Shared visual system for the Node dashboard and public pages. */
 @import "tailwindcss" source("../../");
 @custom-variant dark (&:where(.dark, .dark *));
 
 :root {
   color-scheme: light;
-  --color-brand-50: #f0f7f1;
-  --color-brand-100: #e0eee3;
-  --color-brand-200: #bfdcc6;
-  --color-brand-300: #98c5a3;
-  --color-brand-400: #68a57b;
-  --color-brand-500: #32734b;
-  --color-brand-600: #28603d;
-  --color-brand-700: #215033;
-  --color-brand-800: #1d412c;
-  --color-brand-900: #183526;
-  --color-primary: #32734b;
-  --color-primary-hover: #28603d;
-  --color-bg: #f5f7f6;
-  --color-bg-alt: #edf1ee;
+  --color-brand-50: #eaf9f0;
+  --color-brand-100: #d0f2de;
+  --color-brand-200: #a4e5c0;
+  --color-brand-300: #6fdba1;
+  --color-brand-400: #3fd684;
+  --color-brand-500: #22b06a;
+  --color-brand-600: #178a52;
+  --color-brand-700: #147044;
+  --color-brand-800: #115a38;
+  --color-brand-900: #0e4a2f;
+  --color-primary: #147044;
+  --color-primary-hover: #0f5a36;
+  --color-bg: #f4f6fa;
+  --color-bg-alt: #ebeff6;
   --color-surface: #ffffff;
-  --color-surface-2: #f0f4f1;
-  --color-surface-3: #e3eae5;
-  --color-sidebar: #edf2ee;
-  --color-border: #ccd7cf;
-  --color-border-subtle: #e0e7e2;
-  --color-text: #203029;
-  --color-text-main: #203029;
-  --color-text-muted: #58685f;
-  --color-text-subtle: #5e6d64;
-  --color-accent: #32734b;
-  --color-accent-2: #327983;
+  --color-surface-2: #f1f4f9;
+  --color-surface-3: #e5eaf2;
+  --color-sidebar: #eef1f7;
+  --color-border: #d3dbe8;
+  --color-border-subtle: #e2e7f0;
+  --color-text: #16233b;
+  --color-text-main: #16233b;
+  --color-text-muted: #5a6a85;
+  --color-text-subtle: #6e7d97;
+  --color-accent: #147044;
+  --color-accent-2: #2b7f8c;
   --color-accent-3: #976252;
   --color-accent-4: #596f9b;
-  --color-danger: #bc3741;
-  --color-success: #32734b;
-  --color-warning: #946311;
-  --color-info: #326b94;
+  --color-chart-line: #6470e0;
+  --color-danger: #c03434;
+  --color-success: #147044;
+  --color-warning: #94611a;
+  --color-info: #2b6cb8;
   --radius-brand: 8px;
   --radius-brand-lg: 12px;
-  --shadow-soft: 0 1px 2px rgb(24 53 38 / 3%);
-  --shadow-warm: 0 3px 12px rgb(24 53 38 / 6%);
-  --shadow-elevated: 0 16px 56px rgb(18 35 26 / 18%);
+  --shadow-soft: 0 1px 2px rgb(22 35 59 / 4%);
+  --shadow-warm: 0 3px 12px rgb(22 35 59 / 7%);
+  --shadow-elevated: 0 16px 56px rgb(22 35 59 / 16%);
   --shadow-elev: var(--shadow-elevated);
-  --shadow-focus: 0 0 0 3px rgb(50 115 75 / 20%);
+  --shadow-focus: 0 0 0 3px rgb(20 112 68 / 18%);
 }
 .dark {
   color-scheme: dark;
-  --color-primary: #98c5a3;
-  --color-primary-hover: #bfdcc6;
-  --color-bg: #18211d;
-  --color-bg-alt: #1c2821;
-  --color-surface: #202c25;
-  --color-surface-2: #29372e;
-  --color-surface-3: #36483b;
-  --color-sidebar: #151e19;
-  --color-border: #46574b;
-  --color-border-subtle: #34433a;
-  --color-text: #edf3ee;
-  --color-text-main: #edf3ee;
-  --color-text-muted: #afbeb3;
-  --color-text-subtle: #9aada0;
-  --color-accent: #98c5a3;
-  --color-danger: #f58c95;
-  --color-success: #98c5a3;
-  --color-warning: #e4bb6d;
-  --color-info: #8fbfdf;
-  --shadow-soft: 0 1px 2px rgb(0 0 0 / 8%);
-  --shadow-warm: 0 3px 12px rgb(0 0 0 / 12%);
-  --shadow-elevated: 0 16px 56px rgb(0 0 0 / 35%);
+  --color-primary: #3fd684;
+  --color-primary-hover: #6fdba1;
+  --color-bg: #0a0f1d;
+  --color-bg-alt: #0d1426;
+  --color-surface: #111a30;
+  --color-surface-2: #17223c;
+  --color-surface-3: #1e2b49;
+  --color-sidebar: #070c18;
+  --color-border: #243356;
+  --color-border-subtle: #182542;
+  --color-text: #e9effb;
+  --color-text-main: #e9effb;
+  --color-text-muted: #97a6c6;
+  --color-text-subtle: #66789e;
+  --color-accent: #3fd684;
+  --color-accent-2: #5cc8d6;
+  --color-accent-3: #e08d79;
+  --color-accent-4: #8b8df8;
+  --color-chart-line: #8b8df8;
+  --color-danger: #f3796f;
+  --color-success: #3fd684;
+  --color-warning: #f5c044;
+  --color-info: #7aa2ff;
+  --shadow-soft: 0 1px 2px rgb(0 0 0 / 32%);
+  --shadow-warm: 0 3px 12px rgb(0 0 0 / 40%);
+  --shadow-elevated: 0 16px 56px rgb(0 0 0 / 55%);
 }
 @theme inline {
   --color-brand-50: var(--color-brand-50);
@@ -84,6 +140,8 @@
   --color-primary-hover: var(--color-primary-hover);
   --color-bg: var(--color-bg);
   --color-bg-alt: var(--color-bg-alt);
+  --color-bg-subtle: var(--color-bg-alt);
+  --color-bg-hover: var(--color-surface-2);
   --color-surface: var(--color-surface);
   --color-surface-2: var(--color-surface-2);
   --color-surface-3: var(--color-surface-3);
@@ -92,25 +150,28 @@
   --color-border-subtle: var(--color-border-subtle);
   --color-text: var(--color-text);
   --color-text-main: var(--color-text-main);
+  --color-text-primary: var(--color-text-main);
   --color-text-muted: var(--color-text-muted);
   --color-text-subtle: var(--color-text-subtle);
   --color-accent: var(--color-accent);
   --color-danger: var(--color-danger);
+  --color-error: var(--color-danger);
   --color-success: var(--color-success);
   --color-warning: var(--color-warning);
   --color-info: var(--color-info);
-  --color-bg-light: #f5f7f6;
-  --color-bg-dark: #18211d;
+  --color-chart-line: var(--color-chart-line);
+  --color-bg-light: #f4f6fa;
+  --color-bg-dark: #0a0f1d;
   --color-surface-light: #ffffff;
-  --color-surface-dark: #202c25;
-  --color-sidebar-light: #edf2ee;
-  --color-sidebar-dark: #151e19;
-  --color-border-light: #ccd7cf;
-  --color-border-dark: #46574b;
-  --color-text-main-light: #203029;
-  --color-text-main-dark: #edf3ee;
-  --color-text-muted-light: #58685f;
-  --color-text-muted-dark: #afbeb3;
+  --color-surface-dark: #111a30;
+  --color-sidebar-light: #eef1f7;
+  --color-sidebar-dark: #070c18;
+  --color-border-light: #d3dbe8;
+  --color-border-dark: #243356;
+  --color-text-main-light: #16233b;
+  --color-text-main-dark: #e9effb;
+  --color-text-muted-light: #5a6a85;
+  --color-text-muted-dark: #97a6c6;
   --radius-brand: var(--radius-brand);
   --radius-brand-lg: var(--radius-brand-lg);
   --shadow-soft: var(--shadow-soft);
@@ -119,18 +180,21 @@
   --shadow-elev: var(--shadow-elev);
   --shadow-focus: var(--shadow-focus);
   --font-sans: "Segoe UI Variable Text", "Segoe UI", "Helvetica Neue", sans-serif;
+  --font-mono: "Cascadia Mono", "Cascadia Code", "JetBrains Mono", ui-monospace,
+    "SF Mono", "Segoe UI Mono", "Roboto Mono", Consolas, monospace;
 }
 @layer base {
   body { background: var(--color-bg); color: var(--color-text-main); font-family: var(--font-sans); -webkit-font-smoothing: antialiased; }
+  .dark ::selection { background: color-mix(in srgb, var(--color-primary) 32%, transparent); color: var(--color-text-main); }
   :focus-visible { outline: 2px solid var(--color-primary); outline-offset: 3px; }
-  ::selection { background: var(--color-brand-200); color: #183526; }
+  ::selection { background: var(--color-brand-200); color: #0e4a2f; }
   input, textarea, select { accent-color: var(--color-primary); }
   select option { background: var(--color-surface); color: var(--color-text-main); }
   button { user-select: none; }
   button:not(:disabled), [role="button"]:not([aria-disabled="true"]), label[for], summary, select { cursor: pointer; }
   button:disabled, [aria-disabled="true"] { cursor: not-allowed; }
   table { border-collapse: collapse; font-variant-numeric: tabular-nums; }
-  th { font-weight: 600; text-align: left; color: var(--color-text-muted); background: var(--color-surface-2); }
+  th { font-weight: 600; text-align: left; color: var(--color-text-muted); background: color-mix(in srgb, var(--color-surface-2) 60%, transparent); font-size: 0.6875rem; letter-spacing: 0.06em; text-transform: uppercase; font-family: var(--font-mono); }
   th, td { border-color: var(--color-border-subtle); }
   tbody tr:hover { background: color-mix(in srgb, var(--color-surface-2) 65%, transparent); }
 }
@@ -150,6 +214,59 @@
 .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
 .scroll-thin-x::-webkit-scrollbar { height: 4px; }
 .custom-scrollbar::-webkit-scrollbar-thumb, .scroll-thin-x::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 20px; }
+
+/* --- Signal Console data type ------------------------------------------- */
+/* Machine voice: mono, tracked caps for labels, tabular numerals for values. */
+.data-label {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+.data-value {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.mono-title {
+  font-family: var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+/* Live indicator: the one place color pulses. */
+.live-dot { position: relative; }
+.live-dot::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: 9999px;
+  background: color-mix(in srgb, var(--color-primary) 45%, transparent);
+  animation: live-ping 2.4s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+@keyframes live-ping { 75%, 100% { transform: scale(2.2); opacity: 0; } }
+
+/* Login backdrop: quiet grid plane with a single green horizon glow. */
+.grid-backdrop {
+  background-image:
+    linear-gradient(var(--color-border-subtle) 1px, transparent 1px),
+    linear-gradient(90deg, var(--color-border-subtle) 1px, transparent 1px);
+  background-size: 34px 34px;
+  mask-image: radial-gradient(ellipse 90% 62% at 50% 0%, black 25%, transparent 78%);
+}
+.horizon-glow {
+  background: radial-gradient(ellipse 60% 42% at 50% -8%, color-mix(in srgb, var(--color-primary) 14%, transparent), transparent 70%);
+}
+
+/* Terminal screens stay dark in both themes, like the reference. */
+.terminal-screen {
+  background: #060a14;
+  color: #9ee7bc;
+}
+.terminal-screen .custom-scrollbar, .terminal-screen.custom-scrollbar { scrollbar-color: #243356 transparent; }
+
 @font-face {
   font-family: 'Material Symbols Outlined';
   font-style: normal;
@@ -185,6 +302,7 @@
 /* Traffic remains visible in the topology, without flashing or shaking. */
 .topology-router-core { border-color: var(--color-primary); }
 .topology-router-badge { box-shadow: var(--shadow-soft); }
+.dark .topology-edge-kame, .dark .topology-edge-plasma { filter: drop-shadow(0 0 3px rgb(63 214 132 / 45%)); }
 @keyframes topology-edge-dash { to { stroke-dashoffset: -36; } }
 .topology-edge-kame, .topology-edge-plasma { stroke-dasharray: 8 6; animation: topology-edge-dash 2s linear infinite; }
 .react-flow-controls-custom { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 8px; overflow: hidden; }
@@ -198,7 +316,7 @@
 .changelog-body h3 { font-size: .95rem; font-weight: 600; margin: .75rem 0 .4rem; }
 .changelog-body ul { list-style: disc; padding-left: 1.5rem; margin: .5rem 0; }
 .changelog-body p { margin: .5rem 0; }
-.changelog-body code { background: var(--color-surface-2); padding: .1rem .35rem; border-radius: 4px; font-size: .875em; font-family: ui-monospace, monospace; }
+.changelog-body code { background: var(--color-surface-2); padding: .1rem .35rem; border-radius: 4px; font-size: .875em; font-family: var(--font-mono); }
 .changelog-body a { color: var(--color-primary); text-decoration: underline; }
 .changelog-body hr { border: 0; border-top: 1px solid var(--color-border); margin: 1.5rem 0; }
 @media (max-width: 639px) {
@@ -208,5 +326,5 @@
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
-  .skeleton-shimmer, .skeleton-loading { animation: none; }
+  .skeleton-shimmer, .skeleton-loading, .live-dot::after { animation: none; }
 }
