@@ -30,6 +30,7 @@ export {
 // API keys
 export {
   getApiKeys, getApiKeyById, createApiKey, updateApiKey, deleteApiKey, validateApiKey,
+  getApiKeyRow, bindDevice, isModelAllowed,
 } from "./repos/apiKeysRepo.js";
 
 // Combos

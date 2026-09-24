@@ -83,6 +83,12 @@ export const TABLES = {
       machineId: "TEXT",
       isActive: "INTEGER DEFAULT 1",
       createdAt: "TEXT NOT NULL",
+      // Device binding: how many distinct machines may use this key. 0 = unlimited.
+      maxDevices: "INTEGER DEFAULT 0",
+      // JSON array of machineIds that have already used this key.
+      boundDevices: "TEXT",
+      // JSON array of model ids this key may call. Empty/null = all models.
+      allowedModels: "TEXT",
     },
     indexes: ["CREATE INDEX IF NOT EXISTS idx_ak_key ON apiKeys(key)"],
   },

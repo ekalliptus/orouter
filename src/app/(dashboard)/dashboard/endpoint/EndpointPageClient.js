@@ -22,6 +22,10 @@ export default function APIPageClient({ machineId }) {
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
   const [newKeyName, setNewKeyName] = useState("");
+  const [newKeyMaxDevices, setNewKeyMaxDevices] = useState("");
+  const [newKeyAllowedModels, setNewKeyAllowedModels] = useState("");
+  const [editingPolicyId, setEditingPolicyId] = useState(null);
+  const [policyDraft, setPolicyDraft] = useState({ maxDevices: "", allowedModels: "", boundDevices: "" });
   const [createdKey, setCreatedKey] = useState(null);
   const [confirmState, setConfirmState] = useState(null);
 
@@ -629,7 +633,14 @@ export default function APIPageClient({ machineId }) {
       const res = await fetch("/api/keys", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: newKeyName }),
+        body: JSON.stringify({
+          name: newKeyName,
+          maxDevices: Number(newKeyMaxDevices) || 0,
+          allowedModels: newKeyAllowedModels
+            .split(",")
+            .map((m) => m.trim())
+            .filter(Boolean),
+        }),
       });
       const data = await res.json();
 
@@ -637,11 +648,49 @@ export default function APIPageClient({ machineId }) {
         setCreatedKey(data.key);
         await fetchData();
         setNewKeyName("");
+        setNewKeyMaxDevices("");
+        setNewKeyAllowedModels("");
         setShowAddModal(false);
       }
     } catch (error) {
       console.log("Error creating key:", error);
     }
+  };
+
+  const handleSaveKeyPolicy = async (id) => {
+    try {
+      const res = await fetch(`/api/keys/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          maxDevices: Number(policyDraft.maxDevices) || 0,
+          allowedModels: policyDraft.allowedModels
+            .split(",")
+            .map((m) => m.trim())
+            .filter(Boolean),
+          boundDevices: policyDraft.boundDevices
+            .split(",")
+            .map((d) => d.trim())
+            .filter(Boolean),
+        }),
+      });
+      if (res.ok) {
+        const { key } = await res.json();
+        setKeys((prev) => prev.map((k) => (k.id === id ? key : k)));
+        setEditingPolicyId(null);
+      }
+    } catch (error) {
+      console.log("Error saving key policy:", error);
+    }
+  };
+
+  const startEditPolicy = (key) => {
+    setEditingPolicyId(key.id);
+    setPolicyDraft({
+      maxDevices: String(key.maxDevices ?? 0),
+      allowedModels: (key.allowedModels || []).join(", "),
+      boundDevices: (key.boundDevices || []).join(", "),
+    });
   };
 
   const handleDeleteKey = async (id) => {
@@ -1038,7 +1087,47 @@ export default function APIPageClient({ machineId }) {
                   </div>
                   <p className="text-xs text-text-muted mt-1">
                     Created {new Date(key.createdAt).toLocaleDateString()}
+                    {" · "}
+                    {key.maxDevices > 0
+                      ? `${(key.boundDevices || []).length}/${key.maxDevices} devices`
+                      : "unlimited devices"}
+                    {(key.allowedModels || []).length > 0
+                      ? ` · ${(key.allowedModels).length} allowed model${key.allowedModels.length === 1 ? "" : "s"}`
+                      : " · all models"}
                   </p>
+                  {editingPolicyId === key.id ? (
+                    <div className="mt-2 flex flex-col gap-2 border border-border rounded-lg p-3">
+                      <Input
+                        label="Max Devices (0 = unlimited)"
+                        type="number"
+                        min="0"
+                        value={policyDraft.maxDevices}
+                        onChange={(e) => setPolicyDraft((d) => ({ ...d, maxDevices: e.target.value }))}
+                      />
+                      <Input
+                        label="Allowed Models (comma separated)"
+                        value={policyDraft.allowedModels}
+                        onChange={(e) => setPolicyDraft((d) => ({ ...d, allowedModels: e.target.value }))}
+                        placeholder="glm/glm-5.3, openrouter/openai/gpt-4o-mini"
+                      />
+                      <Input
+                        label="Bound Devices (comma separated — remove to unbind)"
+                        value={policyDraft.boundDevices}
+                        onChange={(e) => setPolicyDraft((d) => ({ ...d, boundDevices: e.target.value }))}
+                      />
+                      <div className="flex gap-2">
+                        <Button size="sm" onClick={() => handleSaveKeyPolicy(key.id)}>Save</Button>
+                        <Button size="sm" variant="ghost" onClick={() => setEditingPolicyId(null)}>Cancel</Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => startEditPolicy(key)}
+                      className="text-xs text-primary underline hover:opacity-80 mt-1"
+                    >
+                      Edit access policy
+                    </button>
+                  )}
                   {key.isActive === false && (
                     <p className="text-xs text-orange-500 mt-1">Paused</p>
                   )}
@@ -1083,6 +1172,8 @@ export default function APIPageClient({ machineId }) {
         onClose={() => {
           setShowAddModal(false);
           setNewKeyName("");
+          setNewKeyMaxDevices("");
+          setNewKeyAllowedModels("");
         }}
       >
         <div className="flex flex-col gap-4">
@@ -1092,6 +1183,27 @@ export default function APIPageClient({ machineId }) {
             onChange={(e) => setNewKeyName(e.target.value)}
             placeholder="Production Key"
           />
+          <div className="flex flex-col gap-1">
+            <Input
+              label="Max Devices (0 = unlimited)"
+              type="number"
+              min="0"
+              value={newKeyMaxDevices}
+              onChange={(e) => setNewKeyMaxDevices(e.target.value)}
+              placeholder="1"
+            />
+            <p className="text-xs text-text-muted">
+              First devices that use this key claim its slots. Extra devices get rejected.
+            </p>
+          </div>
+          <div className="flex flex-col gap-1">
+            <Input
+              label="Allowed Models (comma separated, empty = all)"
+              value={newKeyAllowedModels}
+              onChange={(e) => setNewKeyAllowedModels(e.target.value)}
+              placeholder="glm/glm-5.3, openrouter/openai/gpt-4o-mini"
+            />
+          </div>
           <div className="flex gap-2">
             <Button onClick={handleCreateKey} fullWidth disabled={!newKeyName.trim()}>
               Create
@@ -1100,6 +1212,8 @@ export default function APIPageClient({ machineId }) {
               onClick={() => {
                 setShowAddModal(false);
                 setNewKeyName("");
+                setNewKeyMaxDevices("");
+                setNewKeyAllowedModels("");
               }}
               variant="ghost"
               fullWidth

@@ -4,6 +4,7 @@ import {
   clearAccountError,
   extractApiKey,
   isValidApiKey,
+  enforceKeyDevicePolicy,
 } from "../services/auth.js";
 import { getSettings } from "@/lib/localDb";
 import { getModelInfo } from "../services/model.js";
@@ -62,6 +63,11 @@ export async function handleEmbeddings(request) {
     if (!valid) {
       log.warn("AUTH", "Invalid API key (requireApiKey=true)");
       return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Invalid API key");
+    }
+    const policy = await enforceKeyDevicePolicy(apiKey);
+    if (!policy.ok) {
+      log.warn("AUTH", `Key policy rejected: ${policy.error}`);
+      return errorResponse(policy.status || HTTP_STATUS.FORBIDDEN, policy.error);
     }
   }
 

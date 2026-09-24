@@ -17,11 +17,13 @@ export async function GET(request, { params }) {
 }
 
 // PUT /api/keys/[id] - Update key
+// Policy fields: isActive, maxDevices (0 = unlimited), allowedModels (array),
+// boundDevices (array — lets the user unbind a device manually).
 export async function PUT(request, { params }) {
   try {
     const { id } = await params;
     const body = await request.json();
-    const { isActive } = body;
+    const { isActive, maxDevices, allowedModels, boundDevices, name } = body;
 
     const existing = await getApiKeyById(id);
     if (!existing) {
@@ -30,6 +32,26 @@ export async function PUT(request, { params }) {
 
     const updateData = {};
     if (isActive !== undefined) updateData.isActive = isActive;
+    if (name !== undefined) updateData.name = name;
+    if (maxDevices !== undefined) {
+      const n = Number(maxDevices);
+      if (!Number.isFinite(n) || n < 0) {
+        return NextResponse.json({ error: "maxDevices must be a number >= 0" }, { status: 400 });
+      }
+      updateData.maxDevices = Math.floor(n);
+    }
+    if (allowedModels !== undefined) {
+      if (!Array.isArray(allowedModels) || allowedModels.some((m) => typeof m !== "string")) {
+        return NextResponse.json({ error: "allowedModels must be an array of strings" }, { status: 400 });
+      }
+      updateData.allowedModels = allowedModels;
+    }
+    if (boundDevices !== undefined) {
+      if (!Array.isArray(boundDevices) || boundDevices.some((d) => typeof d !== "string")) {
+        return NextResponse.json({ error: "boundDevices must be an array of strings" }, { status: 400 });
+      }
+      updateData.boundDevices = boundDevices;
+    }
 
     const updated = await updateApiKey(id, updateData);
 

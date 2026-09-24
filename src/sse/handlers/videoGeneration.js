@@ -4,6 +4,7 @@ import {
   clearAccountError,
   extractApiKey,
   isValidApiKey,
+  enforceKeyDevicePolicy,
 } from "../services/auth.js";
 import { getSettings } from "@/lib/localDb";
 import { getModelInfo } from "../services/model.js";
@@ -33,6 +34,8 @@ async function requireValidApiKey(request) {
     if (!apiKey) return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Missing API key");
     const valid = await isValidApiKey(apiKey);
     if (!valid) return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Invalid API key");
+    const policy = await enforceKeyDevicePolicy(apiKey);
+    if (!policy.ok) return errorResponse(policy.status || HTTP_STATUS.FORBIDDEN, policy.error);
   }
   return null;
 }

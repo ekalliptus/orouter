@@ -1,4 +1,5 @@
-import { getProviderConnections, validateApiKey, updateProviderConnection, getSettings, getProxyPools } from "@/lib/localDb";
+import { getProviderConnections, validateApiKey, updateProviderConnection, getSettings, getProxyPools, getApiKeyRow, bindDevice, isModelAllowed } from "@/lib/localDb";
+import { parseApiKey } from "@/shared/utils/apiKey";
 import { resolveConnectionProxyConfig, pickProxyPoolId } from "@/lib/network/connectionProxy";
 import { formatRetryAfter, checkFallbackError, isModelLockActive, buildModelLockUpdate, getEarliestModelLockUntil } from "open-sse/services/accountFallback.js";
 import { MAX_RATE_LIMIT_COOLDOWN_MS } from "open-sse/config/errorConfig.js";
@@ -338,4 +339,58 @@ export function extractApiKey(request) {
 export async function isValidApiKey(apiKey) {
   if (!apiKey) return false;
   return await validateApiKey(apiKey);
+}
+
+/**
+ * Enforce device binding + model allowlist for non-chat endpoints that have
+ * no model id (web fetch/search, tts, stt). Model allowlist doesn't apply;
+ * only device binding is enforced.
+ */
+export async function enforceKeyDevicePolicy(apiKey) {
+  return enforceKeyPolicy(apiKey, null);
+}
+
+/**
+ * Device binding + model allowlist enforcement.
+ * Extracts the machineId embedded in new-format keys (sk-{machineId}-…),
+ * binds the device on first use (respecting maxDevices), and rejects
+ * disallowed models. Old-format keys (no embedded machineId) skip device
+ * binding but still get the model allowlist check.
+ *
+ * @returns {{ ok: boolean, status?: number, error?: string }}
+ */
+export async function enforceKeyPolicy(apiKey, modelId) {
+  if (!apiKey) return { ok: true };
+
+  const row = await getApiKeyRow(apiKey);
+  if (!row) return { ok: true }; // unknown key: existing validateApiKey handles it
+  if (!row.isActive) return { ok: false, status: 401, error: "API key is disabled" };
+
+  // Device binding — only for keys that carry a machineId.
+  const parsed = parseApiKey(apiKey);
+  if (parsed?.isNewFormat && parsed.machineId) {
+    const bind = await bindDevice(apiKey, parsed.machineId);
+    if (!bind.ok) {
+      if (bind.reason === "device_limit") {
+        return {
+          ok: false,
+          status: 403,
+          error: `Device limit reached for this API key (${row.maxDevices} device${row.maxDevices === 1 ? "" : "s"} max). Unbind a device or raise the limit in the dashboard.`,
+        };
+      }
+      return { ok: false, status: 401, error: "API key not found" };
+    }
+  }
+
+  // Model allowlist.
+  if (!isModelAllowed(row, modelId)) {
+    const list = (row.allowedModels || []).join(", ");
+    return {
+      ok: false,
+      status: 403,
+      error: `Model "${modelId}" is not allowed for this API key. Allowed: ${list || "(none)"}`,
+    };
+  }
+
+  return { ok: true };
 }
