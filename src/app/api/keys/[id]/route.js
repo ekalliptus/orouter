@@ -23,7 +23,7 @@ export async function PUT(request, { params }) {
   try {
     const { id } = await params;
     const body = await request.json();
-    const { isActive, maxDevices, allowedModels, boundDevices, name } = body;
+    const { isActive, maxDevices, allowedModels, boundDevices, name, expiresAt } = body;
 
     const existing = await getApiKeyById(id);
     if (!existing) {
@@ -51,6 +51,16 @@ export async function PUT(request, { params }) {
         return NextResponse.json({ error: "boundDevices must be an array of strings" }, { status: 400 });
       }
       updateData.boundDevices = boundDevices;
+    }
+    if (expiresAt !== undefined) {
+      // null/empty clears expiry; otherwise must be a valid date.
+      if (expiresAt === null || expiresAt === "") {
+        updateData.expiresAt = null;
+      } else if (Number.isNaN(new Date(expiresAt).getTime())) {
+        return NextResponse.json({ error: "expiresAt must be a valid date" }, { status: 400 });
+      } else {
+        updateData.expiresAt = new Date(expiresAt).toISOString();
+      }
     }
 
     const updated = await updateApiKey(id, updateData);

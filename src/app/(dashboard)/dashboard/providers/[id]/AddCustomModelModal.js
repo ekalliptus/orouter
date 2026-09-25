@@ -6,13 +6,14 @@ import { Button, Modal } from "@/shared/components";
 
 export default function AddCustomModelModal({ isOpen, providerAlias, providerDisplayAlias, onSave, onClose }) {
   const [modelId, setModelId] = useState("");
+  const [expiresAt, setExpiresAt] = useState("");
   const [testStatus, setTestStatus] = useState(null); // null | "testing" | "ok" | "error"
   const [testError, setTestError] = useState("");
   const [saving, setSaving] = useState(false);
 
   // Reset state when modal opens
   useEffect(() => {
-    if (isOpen) { setModelId(""); setTestStatus(null); setTestError(""); }
+    if (isOpen) { setModelId(""); setExpiresAt(""); setTestStatus(null); setTestError(""); }
   }, [isOpen]);
 
   // Strip provider's own alias prefix (e.g. "cc/model" -> "model" for cc provider)
@@ -46,7 +47,7 @@ export default function AddCustomModelModal({ isOpen, providerAlias, providerDis
     if (!cleanId || saving) return;
     setSaving(true);
     try {
-      await onSave(cleanId);
+      await onSave(cleanId, expiresAt || null);
     } finally {
       setSaving(false);
     }
@@ -99,6 +100,19 @@ export default function AddCustomModelModal({ isOpen, providerAlias, providerDis
             <span>{testError || "Model not reachable"}</span>
           </div>
         )}
+
+        <div className="flex flex-col gap-1">
+          <label className="text-sm font-medium mb-1.5 block">Valid Until (optional)</label>
+          <input
+            type="datetime-local"
+            value={expiresAt}
+            onChange={(e) => setExpiresAt(e.target.value)}
+            className="px-3 py-2 text-sm border border-border rounded-lg bg-background focus:outline-none focus:border-primary"
+          />
+          <p className="text-xs text-text-muted">
+            Model otomatis hilang dari daftar setelah waktu ini (kosong = selamanya).
+          </p>
+        </div>
 
         <div className="flex gap-2 pt-1">
           <Button onClick={onClose} variant="ghost" fullWidth size="sm">Cancel</Button>

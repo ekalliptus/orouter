@@ -154,12 +154,12 @@ export default function ModelsCard({ providerId, kindFilter, providerAliasOverri
     } catch (e) { console.log("delete alias error:", e); }
   };
 
-  const handleAddCustomModel = async (modelId) => {
+  const handleAddCustomModel = async (modelId, expiresAt = null) => {
     try {
       const res = await fetch("/api/models/custom", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ providerAlias, id: modelId, type: effectiveType }),
+        body: JSON.stringify({ providerAlias, id: modelId, type: effectiveType, expiresAt }),
       });
       if (res.ok) {
         await fetchData();
@@ -273,8 +273,8 @@ export default function ModelsCard({ providerId, kindFilter, providerAliasOverri
 
       <AddCustomModelModal
         isOpen={showAddCustomModel}
-        onSave={async (modelId) => {
-          await handleAddCustomModel(modelId);
+        onSave={async (modelId, expiresAt) => {
+          await handleAddCustomModel(modelId, expiresAt);
           setShowAddCustomModel(false);
         }}
         onClose={() => setShowAddCustomModel(false)}

@@ -25,7 +25,7 @@ export default function APIPageClient({ machineId }) {
   const [newKeyMaxDevices, setNewKeyMaxDevices] = useState("");
   const [newKeyAllowedModels, setNewKeyAllowedModels] = useState("");
   const [editingPolicyId, setEditingPolicyId] = useState(null);
-  const [policyDraft, setPolicyDraft] = useState({ maxDevices: "", allowedModels: "", boundDevices: "" });
+  const [policyDraft, setPolicyDraft] = useState({ maxDevices: "", allowedModels: "", boundDevices: "", expiresAt: "" });
   const [createdKey, setCreatedKey] = useState(null);
   const [confirmState, setConfirmState] = useState(null);
 
@@ -672,6 +672,7 @@ export default function APIPageClient({ machineId }) {
             .split(",")
             .map((d) => d.trim())
             .filter(Boolean),
+          expiresAt: policyDraft.expiresAt || null,
         }),
       });
       if (res.ok) {
@@ -690,6 +691,7 @@ export default function APIPageClient({ machineId }) {
       maxDevices: String(key.maxDevices ?? 0),
       allowedModels: (key.allowedModels || []).join(", "),
       boundDevices: (key.boundDevices || []).join(", "),
+      expiresAt: key.expiresAt ? key.expiresAt.slice(0, 16) : "",
     });
   };
 
@@ -1094,6 +1096,11 @@ export default function APIPageClient({ machineId }) {
                     {(key.allowedModels || []).length > 0
                       ? ` · ${(key.allowedModels).length} allowed model${key.allowedModels.length === 1 ? "" : "s"}`
                       : " · all models"}
+                    {key.expiresAt
+                      ? key.expired
+                        ? " · EXPIRED"
+                        : ` · valid until ${new Date(key.expiresAt).toLocaleDateString()}`
+                      : ""}
                   </p>
                   {editingPolicyId === key.id ? (
                     <div className="mt-2 flex flex-col gap-2 border border-border rounded-lg p-3">
@@ -1115,6 +1122,19 @@ export default function APIPageClient({ machineId }) {
                         value={policyDraft.boundDevices}
                         onChange={(e) => setPolicyDraft((d) => ({ ...d, boundDevices: e.target.value }))}
                       />
+                      <div className="flex flex-col gap-1">
+                        <Input
+                          label="Valid Until (empty = no expiry)"
+                          type="datetime-local"
+                          value={policyDraft.expiresAt}
+                          onChange={(e) => setPolicyDraft((d) => ({ ...d, expiresAt: e.target.value }))}
+                        />
+                        {key.expiresAt && (
+                          <p className={`text-xs ${key.expired ? "text-red-500" : "text-text-muted"}`}>
+                            {key.expired ? "EXPIRED — key is rejected" : `Expires ${new Date(key.expiresAt).toLocaleString()}`}
+                          </p>
+                        )}
+                      </div>
                       <div className="flex gap-2">
                         <Button size="sm" onClick={() => handleSaveKeyPolicy(key.id)}>Save</Button>
                         <Button size="sm" variant="ghost" onClick={() => setEditingPolicyId(null)}>Cancel</Button>

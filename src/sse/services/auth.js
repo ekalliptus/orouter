@@ -365,6 +365,10 @@ export async function enforceKeyPolicy(apiKey, modelId) {
   const row = await getApiKeyRow(apiKey);
   if (!row) return { ok: true }; // unknown key: existing validateApiKey handles it
   if (!row.isActive) return { ok: false, status: 401, error: "API key is disabled" };
+  // Validity window: an expired key is rejected here (and by validateApiKey).
+  if (row.expiresAt && new Date(row.expiresAt).getTime() <= Date.now()) {
+    return { ok: false, status: 401, error: `API key expired on ${new Date(row.expiresAt).toLocaleString()}` };
+  }
 
   // Device binding — only for keys that carry a machineId.
   const parsed = parseApiKey(apiKey);

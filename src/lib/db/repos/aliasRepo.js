@@ -26,18 +26,31 @@ function customKey(providerAlias, id, type) {
 
 export async function getCustomModels() {
   const all = await customKv.getAll();
-  return Object.values(all);
+  const now = Date.now();
+  return Object.values(all).filter((m) => {
+    // Models with an expired validity window are filtered out (lazy expiry).
+    if (m?.expiresAt && new Date(m.expiresAt).getTime() <= now) return false;
+    return true;
+  });
 }
 
 // Atomic check-then-insert inside transaction to prevent duplicate races
-export async function addCustomModel({ providerAlias, id, type = "llm", name }) {
+// `expiresAt` (optional ISO string) limits how long the custom model stays
+// usable — expired entries are filtered from listings and resolution.
+export async function addCustomModel({ providerAlias, id, type = "llm", name, expiresAt }) {
   const k = customKey(providerAlias, id, type);
   const db = await getAdapter();
   let added = false;
   db.transaction(() => {
     const row = db.get(`SELECT 1 FROM kv WHERE scope = 'customModels' AND key = ?`, [k]);
     if (row) return;
-    const value = stringifyJson({ providerAlias, id, type, name: name || id });
+    const value = stringifyJson({
+      providerAlias,
+      id,
+      type,
+      name: name || id,
+      ...(expiresAt ? { expiresAt } : {}),
+    });
     db.run(`INSERT INTO kv(scope, key, value) VALUES('customModels', ?, ?)`, [k, value]);
     added = true;
   });

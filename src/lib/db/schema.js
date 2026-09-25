@@ -89,6 +89,8 @@ export const TABLES = {
       boundDevices: "TEXT",
       // JSON array of model ids this key may call. Empty/null = all models.
       allowedModels: "TEXT",
+      // ISO date — key stops working after this moment. Empty = no expiry.
+      expiresAt: "TEXT",
     },
     indexes: ["CREATE INDEX IF NOT EXISTS idx_ak_key ON apiKeys(key)"],
   },

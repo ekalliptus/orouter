@@ -21,6 +21,9 @@ function rowToKey(row) {
     maxDevices: row.maxDevices ?? 0,
     boundDevices,
     allowedModels,
+    expiresAt: row.expiresAt || null,
+    // Convenience flag for the UI
+    expired: row.expiresAt ? new Date(row.expiresAt).getTime() <= Date.now() : false,
   };
 }
 
@@ -67,7 +70,7 @@ export async function updateApiKey(id, data) {
     if (!row) return;
     const merged = { ...rowToKey(row), ...data };
     db.run(
-      `UPDATE apiKeys SET key = ?, name = ?, machineId = ?, isActive = ?, maxDevices = ?, boundDevices = ?, allowedModels = ? WHERE id = ?`,
+      `UPDATE apiKeys SET key = ?, name = ?, machineId = ?, isActive = ?, maxDevices = ?, boundDevices = ?, allowedModels = ?, expiresAt = ? WHERE id = ?`,
       [
         merged.key,
         merged.name,
@@ -76,6 +79,7 @@ export async function updateApiKey(id, data) {
         merged.maxDevices ?? 0,
         JSON.stringify(merged.boundDevices || []),
         JSON.stringify(merged.allowedModels || []),
+        merged.expiresAt || null,
         id,
       ]
     );
@@ -92,9 +96,12 @@ export async function deleteApiKey(id) {
 
 export async function validateApiKey(key) {
   const db = await getAdapter();
-  const row = db.get(`SELECT isActive FROM apiKeys WHERE key = ?`, [key]);
+  const row = db.get(`SELECT isActive, expiresAt FROM apiKeys WHERE key = ?`, [key]);
   if (!row) return false;
-  return row.isActive === 1 || row.isActive === true;
+  if (!(row.isActive === 1 || row.isActive === true)) return false;
+  // Expiry check: an expired key is invalid regardless of isActive.
+  if (row.expiresAt && new Date(row.expiresAt).getTime() <= Date.now()) return false;
+  return true;
 }
 
 /**
