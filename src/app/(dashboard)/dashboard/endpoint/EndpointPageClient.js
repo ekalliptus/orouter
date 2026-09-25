@@ -24,6 +24,7 @@ export default function APIPageClient({ machineId }) {
   const [newKeyName, setNewKeyName] = useState("");
   const [newKeyMaxDevices, setNewKeyMaxDevices] = useState("");
   const [newKeyAllowedModels, setNewKeyAllowedModels] = useState("");
+  const [newKeyExpiresAt, setNewKeyExpiresAt] = useState("");
   const [editingPolicyId, setEditingPolicyId] = useState(null);
   const [policyDraft, setPolicyDraft] = useState({ maxDevices: "", allowedModels: "", boundDevices: "", expiresAt: "" });
   const [createdKey, setCreatedKey] = useState(null);
@@ -640,6 +641,7 @@ export default function APIPageClient({ machineId }) {
             .split(",")
             .map((m) => m.trim())
             .filter(Boolean),
+          expiresAt: newKeyExpiresAt || null,
         }),
       });
       const data = await res.json();
@@ -650,6 +652,7 @@ export default function APIPageClient({ machineId }) {
         setNewKeyName("");
         setNewKeyMaxDevices("");
         setNewKeyAllowedModels("");
+        setNewKeyExpiresAt("");
         setShowAddModal(false);
       }
     } catch (error) {
@@ -1194,6 +1197,7 @@ export default function APIPageClient({ machineId }) {
           setNewKeyName("");
           setNewKeyMaxDevices("");
           setNewKeyAllowedModels("");
+          setNewKeyExpiresAt("");
         }}
       >
         <div className="flex flex-col gap-4">
@@ -1224,6 +1228,17 @@ export default function APIPageClient({ machineId }) {
               placeholder="glm/glm-5.3, openrouter/openai/gpt-4o-mini"
             />
           </div>
+          <div className="flex flex-col gap-1">
+            <Input
+              label="Valid Until (optional — calendar/time picker)"
+              type="datetime-local"
+              value={newKeyExpiresAt}
+              onChange={(e) => setNewKeyExpiresAt(e.target.value)}
+            />
+            <p className="text-xs text-text-muted">
+              Key otomatis ditolak setelah waktu ini (kosong = selamanya).
+            </p>
+          </div>
           <div className="flex gap-2">
             <Button onClick={handleCreateKey} fullWidth disabled={!newKeyName.trim()}>
               Create
@@ -1234,6 +1249,7 @@ export default function APIPageClient({ machineId }) {
                 setNewKeyName("");
                 setNewKeyMaxDevices("");
                 setNewKeyAllowedModels("");
+                setNewKeyExpiresAt("");
               }}
               variant="ghost"
               fullWidth
