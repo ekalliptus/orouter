@@ -1,6 +1,6 @@
 {
   "name": "orouter-app",
-  "version": "0.5.86",
+  "version": "0.5.91",
   "description": "ORouter web dashboard",
   "private": true,
   "scripts": {
