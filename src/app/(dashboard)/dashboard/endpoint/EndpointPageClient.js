@@ -1106,25 +1106,72 @@ export default function APIPageClient({ machineId }) {
                       : ""}
                   </p>
                   {editingPolicyId === key.id ? (
-                    <div className="mt-2 flex flex-col gap-2 border border-border rounded-lg p-3">
-                      <Input
-                        label="Max Devices (0 = unlimited)"
-                        type="number"
-                        min="0"
-                        value={policyDraft.maxDevices}
-                        onChange={(e) => setPolicyDraft((d) => ({ ...d, maxDevices: e.target.value }))}
-                      />
-                      <Input
-                        label="Allowed Models (comma separated)"
-                        value={policyDraft.allowedModels}
-                        onChange={(e) => setPolicyDraft((d) => ({ ...d, allowedModels: e.target.value }))}
-                        placeholder="glm/glm-5.3, openrouter/openai/gpt-4o-mini"
-                      />
-                      <Input
-                        label="Bound Devices (comma separated — remove to unbind)"
-                        value={policyDraft.boundDevices}
-                        onChange={(e) => setPolicyDraft((d) => ({ ...d, boundDevices: e.target.value }))}
-                      />
+                    <div className="mt-2 flex flex-col gap-3 border border-border rounded-lg p-3">
+                      {/* Devices section */}
+                      <div>
+                        <p className="text-xs font-medium text-text-main mb-1.5">
+                          {"Devices ("}
+                          {(key.boundDevices || []).length}
+                          {key.maxDevices > 0 ? `/${key.maxDevices}` : ""}
+                          {")"}
+                        </p>
+                        {(key.boundDevices || []).length === 0 && (
+                          <p className="text-xs text-text-muted">No devices bound yet — first use claims a slot.</p>
+                        )}
+                        <div className="flex flex-col gap-1.5">
+                          {(key.boundDevices || []).map((dev) => (
+                            <div key={dev} className="flex items-center justify-between gap-2 rounded border border-border px-2 py-1.5">
+                              <code className="text-xs font-mono text-text-muted truncate">{dev}</code>
+                              <div className="flex gap-2 shrink-0">
+                                <button
+                                  onClick={() => setPolicyDraft((d) => ({
+                                    ...d,
+                                    boundDevices: d.boundDevices.split(",").map((x) => x.trim()).filter((x) => x && x !== dev).join(", "),
+                                  }))}
+                                  className="text-xs text-red-500 hover:opacity-80"
+                                  title="Unbind this device"
+                                >
+                                  Unbind
+                                </button>
+                                <button
+                                  onClick={() => copy(dev, key.id + dev)}
+                                  className="text-text-muted hover:text-primary"
+                                  title="Copy device ID"
+                                >
+                                  <span className="material-symbols-outlined text-[14px]">
+                                    {copied === key.id + dev ? "check" : "content_copy"}
+                                  </span>
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        {key.maxDevices > 0 && (key.boundDevices || []).length >= key.maxDevices && (
+                          <p className="text-xs text-warning mt-1">All slots used — unbind a device to free a slot.</p>
+                        )}
+                      </div>
+
+                      {/* Policy editor */}
+                      <div className="flex flex-col gap-2">
+                        <Input
+                          label="Max Devices (0 = unlimited)"
+                          type="number"
+                          min="0"
+                          value={policyDraft.maxDevices}
+                          onChange={(e) => setPolicyDraft((d) => ({ ...d, maxDevices: e.target.value }))}
+                        />
+                        <Input
+                          label="Allowed Models (comma separated)"
+                          value={policyDraft.allowedModels}
+                          onChange={(e) => setPolicyDraft((d) => ({ ...d, allowedModels: e.target.value }))}
+                          placeholder="glm/glm-5.3, openrouter/openai/gpt-4o-mini"
+                        />
+                        <Input
+                          label="Bound Devices (comma separated — remove to unbind)"
+                          value={policyDraft.boundDevices}
+                          onChange={(e) => setPolicyDraft((d) => ({ ...d, boundDevices: e.target.value }))}
+                        />
+                      </div>
                       <div className="flex flex-col gap-1">
                         <Input
                           label="Valid Until (empty = no expiry)"
@@ -1178,12 +1225,31 @@ export default function APIPageClient({ machineId }) {
                       </div>
                     </div>
                   ) : (
-                    <button
-                      onClick={() => startEditPolicy(key)}
-                      className="text-xs text-primary underline hover:opacity-80 mt-1"
-                    >
-                      Edit access policy
-                    </button>
+                    <div className="flex flex-col gap-1">
+                      <button
+                        onClick={() => startEditPolicy(key)}
+                        className="text-xs text-primary underline hover:opacity-80 text-left"
+                      >
+                        Edit access policy
+                      </button>
+                      <button
+                        onClick={() => {
+                          setEditingPolicyId(key.id);
+                          setPolicyDraft({
+                            maxDevices: String(key.maxDevices ?? 0),
+                            allowedModels: (key.allowedModels || []).join(", "),
+                            boundDevices: "",
+                            expiresAt: key.expiresAt ? key.expiresAt.slice(0, 16) : "",
+                          });
+                        }}
+                        className="text-xs text-primary underline hover:opacity-80 text-left"
+                        title="Unbind all devices so they can re-bind fresh"
+                      >
+                        {"Reset devices ("}
+                        {(key.boundDevices || []).length}
+                        {")"}
+                      </button>
+                    </div>
                   )}
                   {key.isActive === false && (
                     <p className="text-xs text-orange-500 mt-1">Paused</p>
