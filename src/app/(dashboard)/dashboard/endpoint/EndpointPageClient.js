@@ -1132,9 +1132,43 @@ export default function APIPageClient({ machineId }) {
                           value={policyDraft.expiresAt}
                           onChange={(e) => setPolicyDraft((d) => ({ ...d, expiresAt: e.target.value }))}
                         />
+                        <div className="flex gap-1.5 flex-wrap">
+                          {[
+                            { label: "+1 day", ms: 864e5 },
+                            { label: "+1 week", ms: 6048e5 },
+                            { label: "+30 days", ms: 2592e6 },
+                            { label: "+90 days", ms: 7776e6 },
+                          ].map((p) => (
+                            <button
+                              key={p.label}
+                              type="button"
+                              onClick={() => setPolicyDraft((d) => ({
+                                ...d,
+                                expiresAt: new Date(Date.now() + p.ms).toISOString().slice(0, 16),
+                              }))}
+                              className="px-2 py-0.5 text-xs rounded border border-border text-text-muted hover:text-primary hover:border-primary/40 transition-colors"
+                            >
+                              {p.label}
+                            </button>
+                          ))}
+                          {policyDraft.expiresAt && (
+                            <button
+                              type="button"
+                              onClick={() => setPolicyDraft((d) => ({ ...d, expiresAt: "" }))}
+                              className="px-2 py-0.5 text-xs rounded border border-border text-red-500 hover:bg-red-500/10 transition-colors"
+                            >
+                              Clear
+                            </button>
+                          )}
+                        </div>
                         {key.expiresAt && (
                           <p className={`text-xs ${key.expired ? "text-red-500" : "text-text-muted"}`}>
                             {key.expired ? "EXPIRED — key is rejected" : `Expires ${new Date(key.expiresAt).toLocaleString()}`}
+                          </p>
+                        )}
+                        {key.expired && (
+                          <p className="text-xs text-text-muted">
+                            Clear the date (or pick a future one) and Save to revive this key.
                           </p>
                         )}
                       </div>
