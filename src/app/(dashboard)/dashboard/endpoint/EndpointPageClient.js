@@ -28,6 +28,7 @@ export default function APIPageClient({ machineId }) {
   const [editingPolicyId, setEditingPolicyId] = useState(null);
   const [policyDraft, setPolicyDraft] = useState({ maxDevices: "", allowedModels: "", boundDevices: "", expiresAt: "" });
   const [createdKey, setCreatedKey] = useState(null);
+  const [usageByKey, setUsageByKey] = useState({});
   const [confirmState, setConfirmState] = useState(null);
 
   const [requireApiKey, setRequireApiKey] = useState(false);
@@ -280,6 +281,28 @@ export default function APIPageClient({ machineId }) {
         } catch { /* fall through to empty render */ }
       }
       setKeys(existing);
+
+      // Per-key usage stats (24h window) to decorate each key row.
+      // Stats are keyed by masked key (first 8 chars + "***") — match the
+      // same masking against each key row.
+      try {
+        const statsRes = await fetch("/api/usage/stats?period=24h", { cache: "no-store" });
+        if (statsRes.ok) {
+          const data = await statsRes.json();
+          const perKey = {};
+          Object.values(data.byApiKey || {}).forEach((v) => {
+            const masked = v.apiKeyMasked || "";
+            if (!masked) return;
+            if (!perKey[masked]) perKey[masked] = { requests: 0, promptTokens: 0, completionTokens: 0, cost: 0, lastUsed: "" };
+            perKey[masked].requests += v.requests || 0;
+            perKey[masked].promptTokens += v.promptTokens || 0;
+            perKey[masked].completionTokens += v.completionTokens || 0;
+            perKey[masked].cost += v.cost || 0;
+            if (v.lastUsed > perKey[masked].lastUsed) perKey[masked].lastUsed = v.lastUsed;
+          });
+          setUsageByKey(perKey);
+        }
+      } catch { /* stats are decorative — ignore failures */ }
     } catch (error) {
       console.log("Error fetching data:", error);
     } finally {
@@ -1105,6 +1128,30 @@ export default function APIPageClient({ machineId }) {
                         : ` · valid until ${new Date(key.expiresAt).toLocaleDateString()}`
                       : ""}
                   </p>
+                  {(() => {
+                    const masked = key.key.slice(0, 8) + "***";
+                    const u = usageByKey[masked];
+                    if (!u || u.requests === 0) return null;
+                    return (
+                      <p className="text-xs mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5">
+                        <span className="inline-flex items-center gap-1 text-text-muted">
+                          <span className="material-symbols-outlined text-[13px] text-primary">insights</span>
+                          {u.requests} req
+                        </span>
+                        <span className="text-text-muted">
+                          ↑{u.promptTokens.toLocaleString()} ↓{u.completionTokens.toLocaleString()} tok
+                        </span>
+                        {u.cost > 0 && (
+                          <span className="text-text-muted">~${u.cost.toFixed(2)}</span>
+                        )}
+                        {u.lastUsed && (
+                          <span className="text-text-muted" title={new Date(u.lastUsed).toLocaleString()}>
+                            last {new Date(u.lastUsed).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                          </span>
+                        )}
+                      </p>
+                    );
+                  })()}
                   {editingPolicyId === key.id ? (
                     <div className="mt-2 flex flex-col gap-3 border border-border rounded-lg p-3">
                       {/* Devices section */}
