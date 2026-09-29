@@ -1,4 +1,5 @@
 import { EventEmitter } from "events";
+import { createHash } from "node:crypto";
 import { getAdapter } from "../driver.js";
 import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
 import { getMeta, setMeta } from "../helpers/metaStore.js";
@@ -368,6 +369,41 @@ export async function saveRequestUsage(entry) {
   }
 }
 
+export async function getApiKeyUsage(id, { period = "24h", page = 1, pageSize = 20 } = {}) {
+  if (typeof id !== "string" || !/^[a-zA-Z0-9_-]{1,128}$/.test(id)
+      || !Object.hasOwn(PERIOD_MS, period)
+      || !Number.isInteger(page) || page < 1 || page > 100000
+      || !Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) {
+    throw new RangeError("Invalid key ID, period or pagination");
+  }
+  const db = await getAdapter();
+  const key = db.get("SELECT id, name, key FROM apiKeys WHERE id = ?", [id]);
+  if (!key) return null;
+  const end = new Date().toISOString();
+  const start = new Date(Date.parse(end) - PERIOD_MS[period]).toISOString();
+  const where = "WHERE apiKey = ? AND timestamp >= ? AND timestamp <= ?";
+  const params = [key.key, start, end];
+  const cached = "COALESCE(json_extract(CASE WHEN json_valid(tokens) THEN tokens ELSE '{}' END, '$.cached_tokens'), json_extract(CASE WHEN json_valid(tokens) THEN tokens ELSE '{}' END, '$.cache_read_input_tokens'), 0)";
+  const totals = `COUNT(*) AS requests, COALESCE(SUM(promptTokens), 0) AS promptTokens,
+    COALESCE(SUM(completionTokens), 0) AS completionTokens,
+    COALESCE(SUM(${cached}), 0) AS cachedTokens, COALESCE(SUM(cost), 0) AS cost,
+    MAX(timestamp) AS lastUsed`;
+  // ponytail: totals cover retained history only; use exact-key rollups if longer retention is needed.
+  let result;
+  db.transaction(() => {
+    const summary = db.get(`SELECT ${totals} FROM usageHistory ${where}`, params);
+    const models = db.all(`SELECT model, provider, ${totals} FROM usageHistory ${where}
+      GROUP BY model, provider ORDER BY requests DESC, model, provider`, params);
+    const requests = db.all(`SELECT id, timestamp, model, provider, status, promptTokens,
+      completionTokens, ${cached} AS cachedTokens, cost FROM usageHistory ${where}
+      ORDER BY timestamp DESC, id DESC LIMIT ? OFFSET ?`, [...params, pageSize, (page - 1) * pageSize]);
+    result = { key: { id: key.id, name: key.name }, period, start, end, summary, models, requests,
+      pagination: { page, pageSize, total: summary.requests, totalPages: Math.ceil(summary.requests / pageSize) },
+      scope: "retained-history" };
+  });
+  return result;
+}
+
 export async function getUsageHistory(filter = {}) {
   const db = await getAdapter();
   const conds = [];
@@ -575,7 +611,7 @@ export async function getUsageStats(period = "all") {
         const apiKeyMasked = maskApiKey(apiKeyVal);
         const apiKeyKey = apiKeyMasked || "local-no-key";
         if (!stats.byApiKey[akKey]) {
-          stats.byApiKey[akKey] = { requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, cost: 0, rawModel, provider: providerDisplayName, apiKeyMasked, keyName, apiKeyKey, lastUsed: dateKey };
+          stats.byApiKey[akKey] = { requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, cost: 0, rawModel, provider: providerDisplayName, apiKeyMasked, keyName, apiKeyKey, apiKeyId: keyInfo?.id || null, lastUsed: dateKey };
         }
         stats.byApiKey[akKey].requests += ak.requests || 0;
         stats.byApiKey[akKey].promptTokens += ak.promptTokens || 0;
@@ -639,8 +675,8 @@ export async function getUsageStats(period = "all") {
       cutoff = new Date(Date.now() - PERIOD_MS["24h"]).toISOString();
     }
     const filtered = db.all(
-      `SELECT timestamp, provider, model, connectionId, apiKey, endpoint, promptTokens, completionTokens, cost, tokens FROM usageHistory WHERE timestamp >= ?`,
-      [cutoff]
+      `SELECT timestamp, provider, model, connectionId, apiKey, endpoint, promptTokens, completionTokens, cost, tokens FROM usageHistory WHERE timestamp >= ? AND timestamp <= ?`,
+      [cutoff, now.toISOString()]
     );
 
     for (const r of filtered) {
@@ -692,9 +728,9 @@ export async function getUsageStats(period = "all") {
         const keyInfo = apiKeyMap[r.apiKey];
         const keyName = keyInfo?.name || r.apiKey.slice(0, 8) + "...";
         const apiKeyMasked = maskApiKey(r.apiKey);
-        const akKey = `${apiKeyMasked}|${r.model}|${r.provider || "unknown"}`;
+        const akKey = `${r.apiKey}|${r.model}|${r.provider || "unknown"}`;
         if (!stats.byApiKey[akKey]) {
-          stats.byApiKey[akKey] = { requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, cost: 0, rawModel: r.model, provider: providerDisplayName, apiKeyMasked, keyName, apiKeyKey: apiKeyMasked, lastUsed: r.timestamp };
+          stats.byApiKey[akKey] = { requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, cost: 0, rawModel: r.model, provider: providerDisplayName, apiKeyMasked, keyName, apiKeyKey: apiKeyMasked, apiKeyId: keyInfo?.id || null, lastUsed: r.timestamp };
         }
         const ake = stats.byApiKey[akKey];
         ake.requests++; ake.promptTokens += promptTokens; ake.completionTokens += completionTokens; ake.cachedTokens += cachedTokens; ake.cost += entryCost;
@@ -719,6 +755,12 @@ export async function getUsageStats(period = "all") {
     }
   }
 
+  // Internal rollup keys contain credentials; publish only row IDs or opaque legacy identities.
+  stats.byApiKey = Object.fromEntries(Object.entries(stats.byApiKey).map(([internalKey, value]) => {
+    const identity = value.apiKeyId || (value.apiKeyMasked
+      ? `unregistered-${createHash("sha256").update(internalKey).digest("hex")}` : "local-no-key");
+    return [JSON.stringify([identity, value.rawModel, value.provider]), { ...value, apiKeyKey: identity }];
+  }));
   stats.totalRequests = Object.values(stats.byProvider).reduce((sum, p) => sum + (p.requests || 0), 0);
 
   // Populate cache after a successful compute. Clone stored so the cached object is independent

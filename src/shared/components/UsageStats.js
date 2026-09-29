@@ -162,10 +162,11 @@ function groupDataByKey(data, keyField) {
   if (!Array.isArray(data)) return [];
   const groups = {};
   data.forEach((item) => {
-    const gk = getGroupKey(item, keyField);
+    const gk = keyField === "keyName" ? item.apiKeyKey : getGroupKey(item, keyField);
     if (!groups[gk]) {
       groups[gk] = {
         groupKey: gk,
+        label: getGroupKey(item, keyField),
         summary: { requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, totalTokens: 0, cost: 0, inputCost: 0, cachedCost: 0, outputCost: 0, lastUsed: null, pending: 0 },
         items: [],
       };

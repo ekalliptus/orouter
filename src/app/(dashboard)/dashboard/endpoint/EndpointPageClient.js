@@ -17,6 +17,7 @@ import EndpointRow from "./components/EndpointRow";
 import StatusAlert from "./components/StatusAlert";
 import Tooltip from "./components/Tooltip";
 import SecurityWarning from "./components/SecurityWarning";
+import KeyUsageModal from "./components/KeyUsageModal";
 export default function APIPageClient({ machineId }) {
   const [keys, setKeys] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -29,6 +30,8 @@ export default function APIPageClient({ machineId }) {
   const [policyDraft, setPolicyDraft] = useState({ maxDevices: "", allowedModels: "", boundDevices: "", expiresAt: "" });
   const [createdKey, setCreatedKey] = useState(null);
   const [usageByKey, setUsageByKey] = useState({});
+  const [usageKey, setUsageKey] = useState(null);
+  const [usageStatus, setUsageStatus] = useState("loading");
   const [confirmState, setConfirmState] = useState(null);
 
   const [requireApiKey, setRequireApiKey] = useState(false);
@@ -282,27 +285,25 @@ export default function APIPageClient({ machineId }) {
       }
       setKeys(existing);
 
-      // Per-key usage stats (24h window) to decorate each key row.
-      // Stats are keyed by masked key (first 8 chars + "***") — match the
-      // same masking against each key row.
+      setUsageStatus("loading");
       try {
         const statsRes = await fetch("/api/usage/stats?period=24h", { cache: "no-store" });
-        if (statsRes.ok) {
-          const data = await statsRes.json();
-          const perKey = {};
-          Object.values(data.byApiKey || {}).forEach((v) => {
-            const masked = v.apiKeyMasked || "";
-            if (!masked) return;
-            if (!perKey[masked]) perKey[masked] = { requests: 0, promptTokens: 0, completionTokens: 0, cost: 0, lastUsed: "" };
-            perKey[masked].requests += v.requests || 0;
-            perKey[masked].promptTokens += v.promptTokens || 0;
-            perKey[masked].completionTokens += v.completionTokens || 0;
-            perKey[masked].cost += v.cost || 0;
-            if (v.lastUsed > perKey[masked].lastUsed) perKey[masked].lastUsed = v.lastUsed;
-          });
-          setUsageByKey(perKey);
-        }
-      } catch { /* stats are decorative — ignore failures */ }
+        if (!statsRes.ok) throw new Error("Usage unavailable");
+        const data = await statsRes.json();
+        const perKey = {};
+        Object.values(data.byApiKey || {}).forEach((v) => {
+          const id = v.apiKeyId;
+          if (!id) return;
+          if (!perKey[id]) perKey[id] = { requests: 0, promptTokens: 0, completionTokens: 0, cost: 0, lastUsed: "" };
+          perKey[id].requests += v.requests || 0;
+          perKey[id].promptTokens += v.promptTokens || 0;
+          perKey[id].completionTokens += v.completionTokens || 0;
+          perKey[id].cost += v.cost || 0;
+          if (v.lastUsed > perKey[id].lastUsed) perKey[id].lastUsed = v.lastUsed;
+        });
+        setUsageByKey(perKey);
+        setUsageStatus("ready");
+      } catch { setUsageStatus("error"); }
     } catch (error) {
       console.log("Error fetching data:", error);
     } finally {
@@ -1129,14 +1130,14 @@ export default function APIPageClient({ machineId }) {
                       : ""}
                   </p>
                   {(() => {
-                    const masked = key.key.slice(0, 8) + "***";
-                    const u = usageByKey[masked];
-                    if (!u || u.requests === 0) return null;
+                    const u = usageByKey[key.id];
+                    if (usageStatus !== "ready") return <p className="text-xs text-text-muted mt-1">{usageStatus === "loading" ? "Loading usage…" : "Usage unavailable — open details to retry."}</p>;
+                    if (!u || u.requests === 0) return <p className="text-xs text-text-muted mt-1">No requests in the last 24 hours.</p>;
                     return (
                       <p className="text-xs mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5">
                         <span className="inline-flex items-center gap-1 text-text-muted">
                           <span className="material-symbols-outlined text-[13px] text-primary">insights</span>
-                          {u.requests} req
+                          {u.requests} req · 24h
                         </span>
                         <span className="text-text-muted">
                           ↑{u.promptTokens.toLocaleString()} ↓{u.completionTokens.toLocaleString()} tok
@@ -1152,6 +1153,9 @@ export default function APIPageClient({ machineId }) {
                       </p>
                     );
                   })()}
+                  <Button size="sm" variant="ghost" className="mt-2" onClick={() => setUsageKey({ id: key.id, name: key.name })} aria-haspopup="dialog">
+                    View usage
+                  </Button>
                   {editingPolicyId === key.id ? (
                     <div className="mt-2 flex flex-col gap-3 border border-border rounded-lg p-3">
                       {/* Devices section */}
@@ -1334,6 +1338,8 @@ export default function APIPageClient({ machineId }) {
           </div>
         )}
       </Card>
+
+      {usageKey && <KeyUsageModal key={usageKey.id} apiKey={usageKey} onClose={() => setUsageKey(null)} />}
 
       {/* Add Key Modal */}
       <Modal
