@@ -1098,6 +1098,30 @@ export default function APIPageClient({ machineId }) {
                   >
                     {key.name}
                   </button>
+                  {editingPolicyId !== key.id && (() => {
+                    const masked = key.key.slice(0, 8) + "***";
+                    const u = usageByKey[masked];
+                    if (!u || u.requests === 0) return null;
+                    return (
+                      <p className="text-xs mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5">
+                        <span className="inline-flex items-center gap-1 text-text-muted">
+                          <span className="material-symbols-outlined text-[13px] text-primary">insights</span>
+                          {u.requests} req
+                        </span>
+                        <span className="text-text-muted">
+                          ↑{u.promptTokens.toLocaleString()} ↓{u.completionTokens.toLocaleString()} tok
+                        </span>
+                        {u.cost > 0 && (
+                          <span className="text-text-muted">~${u.cost.toFixed(2)}</span>
+                        )}
+                        {u.lastUsed && (
+                          <span className="text-text-muted" title={new Date(u.lastUsed).toLocaleString()}>
+                            last {new Date(u.lastUsed).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                          </span>
+                        )}
+                      </p>
+                    );
+                  })()}
                   <div className="flex items-center gap-2 mt-1">
                     <code className="text-xs text-text-muted font-mono">
                       {visibleKeys.has(key.id) ? key.key : maskKey(key.key)}
