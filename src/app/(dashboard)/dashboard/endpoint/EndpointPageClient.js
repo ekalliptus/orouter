@@ -1091,7 +1091,13 @@ export default function APIPageClient({ machineId }) {
                 className={`group flex items-center justify-between py-3 border-b border-black/[0.03] dark:border-white/[0.03] last:border-b-0 ${key.isActive === false ? "opacity-60" : ""}`}
               >
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium">{key.name}</p>
+                  <button
+                    onClick={() => startEditPolicy(key)}
+                    className="text-sm font-medium hover:text-primary transition-colors text-left"
+                    title="Open key dashboard (usage, devices, policy)"
+                  >
+                    {key.name}
+                  </button>
                   <div className="flex items-center gap-2 mt-1">
                     <code className="text-xs text-text-muted font-mono">
                       {visibleKeys.has(key.id) ? key.key : maskKey(key.key)}
