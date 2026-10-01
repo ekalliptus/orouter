@@ -289,6 +289,22 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   // system/tools/messages, and a stale anchor costs a full prefix rewrite.
   if (passthrough && clientTool === "claude") anchorClaudeCache(translatedBody);
 
+  // Align the upstream body with the transport mode. `stream` here defaults to
+  // true (body.stream !== false), but an OpenAI-format client that omits the
+  // flag forwards a body without stream:true — OpenAI-compat upstreams (z.ai,
+  // DeepSeek, …) then answer with a single JSON blob, the SSE transform
+  // captures no content and no usage, and the client gets an empty 200.
+  // include_usage: without it those upstreams omit usage from stream chunks
+  // entirely, so the request never reaches usageHistory. Same-format
+  // passthrough skips the translators (where iflow/qwen inject this), so it
+  // must happen here where targetFormat is known. codex (openai-responses) and
+  // grok-cli strip stream_options in their own executors before the fetch, so
+  // over-injection here is harmless.
+  if (stream && targetFormat === FORMATS.OPENAI && modelType !== "tts" && translatedBody && Array.isArray(translatedBody.messages)) {
+    translatedBody.stream = true;
+    if (!translatedBody.stream_options) translatedBody.stream_options = { include_usage: true };
+  }
+
   const executor = getExecutor(provider);
   trackPendingRequest(model, provider, connectionId, true);
   appendRequestLog({ model, provider, connectionId, status: "PENDING" }).catch(() => { });
