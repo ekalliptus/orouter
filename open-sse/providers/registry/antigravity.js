@@ -62,6 +62,11 @@ export default {
     { id: "gemini-3.1-pro-low", name: "Gemini 3.1 Pro (Low)" },
     { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6 (Thinking)" },
     { id: "claude-opus-4-6-thinking", name: "Claude Opus 4.6 (Thinking)" },
+    // Claude 5.5 — wire ids confirmed from the official IDE language server
+    // binary (claude-opus-5-5@default; sonnet follows the same convention).
+    // Server-side gated: 404s until Google enables them for the account.
+    { id: "claude-opus-5-5", name: "Claude Opus 5.5 (Thinking)" },
+    { id: "claude-sonnet-5-5", name: "Claude Sonnet 5.5 (Thinking)" },
     { id: "gpt-oss-120b-medium", name: "GPT-OSS 120B (Medium)" },
     { id: "gemini-3-flash", name: "Gemini 3 Flash", thinking: false },
     // Image generation models
