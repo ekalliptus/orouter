@@ -308,12 +308,39 @@ function ensureObjectType(obj) {
   for (const v of Object.values(obj)) if (v && typeof v === "object") ensureObjectType(v);
 }
 
+// Some clients emit a bare string where a Schema object belongs (e.g. properties: { x: "object" }).
+// The Vertex Schema proto rejects the whole request with 400 "Invalid value at ... .value" —
+// coerce string-valued schema positions into { type } so one bad tool cannot fail the request.
+function coerceStringSchemas(obj) {
+  if (!obj || typeof obj !== "object") return;
+  for (const [key, value] of Object.entries(obj)) {
+    if ((key === "properties" || key === "patternProperties") && value && typeof value === "object" && !Array.isArray(value)) {
+      for (const [name, schema] of Object.entries(value)) {
+        if (typeof schema === "string") value[name] = { type: schema };
+        else coerceStringSchemas(schema);
+      }
+    } else if (Array.isArray(value) && (key === "anyOf" || key === "oneOf" || key === "allOf" || key === "prefixItems")) {
+      for (let i = 0; i < value.length; i++) {
+        if (typeof value[i] === "string") value[i] = { type: value[i] };
+        else coerceStringSchemas(value[i]);
+      }
+    } else if ((key === "items" || key === "additionalProperties") && typeof value === "string") {
+      obj[key] = { type: value };
+    } else if (value && typeof value === "object") {
+      coerceStringSchemas(value);
+    }
+  }
+}
+
 // Clean JSON Schema for Antigravity API compatibility - removes unsupported keywords recursively
 export function cleanJSONSchemaForAntigravity(schema) {
   if (!schema || typeof schema !== "object") return schema;
 
   // Mutate directly (schema is only used once per request)
   let cleaned = schema;
+
+  // Phase 0: coerce bare-string schema values into { type } objects
+  coerceStringSchemas(cleaned);
 
   // Phase 1: Convert and prepare
   convertConstToEnum(cleaned);
