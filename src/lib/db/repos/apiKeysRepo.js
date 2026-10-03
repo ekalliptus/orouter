@@ -22,6 +22,8 @@ function rowToKey(row) {
     boundDevices,
     allowedModels,
     expiresAt: row.expiresAt || null,
+    // Lifetime token budget. 0/null = unlimited.
+    tokenLimit: row.tokenLimit ?? 0,
     // Convenience flag for the UI
     expired: row.expiresAt ? new Date(row.expiresAt).getTime() <= Date.now() : false,
   };
@@ -70,7 +72,7 @@ export async function updateApiKey(id, data) {
     if (!row) return;
     const merged = { ...rowToKey(row), ...data };
     db.run(
-      `UPDATE apiKeys SET key = ?, name = ?, machineId = ?, isActive = ?, maxDevices = ?, boundDevices = ?, allowedModels = ?, expiresAt = ? WHERE id = ?`,
+      `UPDATE apiKeys SET key = ?, name = ?, machineId = ?, isActive = ?, maxDevices = ?, boundDevices = ?, allowedModels = ?, expiresAt = ?, tokenLimit = ? WHERE id = ?`,
       [
         merged.key,
         merged.name,
@@ -80,6 +82,7 @@ export async function updateApiKey(id, data) {
         JSON.stringify(merged.boundDevices || []),
         JSON.stringify(merged.allowedModels || []),
         merged.expiresAt || null,
+        merged.tokenLimit ?? 0,
         id,
       ]
     );
@@ -112,6 +115,19 @@ export async function getApiKeyRow(key) {
   const db = await getAdapter();
   const row = db.get(`SELECT * FROM apiKeys WHERE key = ?`, [key]);
   return rowToKey(row);
+}
+
+/**
+ * Total tokens (prompt + completion) recorded in usageHistory for a raw key
+ * value. Covers retained history only — the same scope the usage dashboard shows.
+ */
+export async function getApiKeyTokensUsed(key) {
+  const db = await getAdapter();
+  const row = db.get(
+    `SELECT COALESCE(SUM(promptTokens + completionTokens), 0) AS total FROM usageHistory WHERE apiKey = ?`,
+    [key]
+  );
+  return row?.total ?? 0;
 }
 
 /**

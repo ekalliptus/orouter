@@ -1,4 +1,4 @@
-import { getProviderConnections, validateApiKey, updateProviderConnection, getSettings, getProxyPools, getApiKeyRow, bindDevice, isModelAllowed } from "@/lib/localDb";
+import { getProviderConnections, validateApiKey, updateProviderConnection, getSettings, getProxyPools, getApiKeyRow, bindDevice, isModelAllowed, getApiKeyTokensUsed } from "@/lib/localDb";
 import { parseApiKey } from "@/shared/utils/apiKey";
 import { resolveConnectionProxyConfig, pickProxyPoolId } from "@/lib/network/connectionProxy";
 import { formatRetryAfter, checkFallbackError, isModelLockActive, buildModelLockUpdate, getEarliestModelLockUntil } from "open-sse/services/accountFallback.js";
@@ -368,6 +368,18 @@ export async function enforceKeyPolicy(apiKey, modelId) {
   // Validity window: an expired key is rejected here (and by validateApiKey).
   if (row.expiresAt && new Date(row.expiresAt).getTime() <= Date.now()) {
     return { ok: false, status: 401, error: `API key expired on ${new Date(row.expiresAt).toLocaleString()}` };
+  }
+
+  // Lifetime token budget (prompt+completion, retained usage history).
+  if (row.tokenLimit && row.tokenLimit > 0) {
+    const used = await getApiKeyTokensUsed(apiKey);
+    if (used >= row.tokenLimit) {
+      return {
+        ok: false,
+        status: 403,
+        error: `Token limit reached for this API key (${used.toLocaleString()} / ${Number(row.tokenLimit).toLocaleString()} tokens). Raise or clear the limit in the dashboard.`,
+      };
+    }
   }
 
   // Device binding — only for keys that carry a machineId.

@@ -18,6 +18,17 @@ import StatusAlert from "./components/StatusAlert";
 import Tooltip from "./components/Tooltip";
 import SecurityWarning from "./components/SecurityWarning";
 import KeyUsageModal from "./components/KeyUsageModal";
+
+// ISO (UTC) → "YYYY-MM-DDTHH:mm" in the browser's local time, for <input type="datetime-local">.
+// Slicing a stored ISO string would show UTC and shift the picker by the timezone offset.
+function isoToLocalInput(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 export default function APIPageClient({ machineId }) {
   const [keys, setKeys] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -26,8 +37,9 @@ export default function APIPageClient({ machineId }) {
   const [newKeyMaxDevices, setNewKeyMaxDevices] = useState("");
   const [newKeyAllowedModels, setNewKeyAllowedModels] = useState("");
   const [newKeyExpiresAt, setNewKeyExpiresAt] = useState("");
+  const [newKeyTokenLimit, setNewKeyTokenLimit] = useState("");
   const [editingPolicyId, setEditingPolicyId] = useState(null);
-  const [policyDraft, setPolicyDraft] = useState({ maxDevices: "", allowedModels: "", boundDevices: "", expiresAt: "" });
+  const [policyDraft, setPolicyDraft] = useState({ maxDevices: "", allowedModels: "", boundDevices: [], tokenLimit: "", expiresAt: "" });
   const [createdKey, setCreatedKey] = useState(null);
   const [usageByKey, setUsageByKey] = useState({});
   const [usageKey, setUsageKey] = useState(null);
@@ -666,6 +678,7 @@ export default function APIPageClient({ machineId }) {
             .map((m) => m.trim())
             .filter(Boolean),
           expiresAt: newKeyExpiresAt || null,
+          tokenLimit: Number(newKeyTokenLimit) || 0,
         }),
       });
       const data = await res.json();
@@ -677,6 +690,7 @@ export default function APIPageClient({ machineId }) {
         setNewKeyMaxDevices("");
         setNewKeyAllowedModels("");
         setNewKeyExpiresAt("");
+        setNewKeyTokenLimit("");
         setShowAddModal(false);
       }
     } catch (error) {
@@ -695,10 +709,8 @@ export default function APIPageClient({ machineId }) {
             .split(",")
             .map((m) => m.trim())
             .filter(Boolean),
-          boundDevices: policyDraft.boundDevices
-            .split(",")
-            .map((d) => d.trim())
-            .filter(Boolean),
+          boundDevices: (policyDraft.boundDevices || []).filter(Boolean),
+          tokenLimit: policyDraft.tokenLimit === "" ? 0 : Number(policyDraft.tokenLimit) || 0,
           expiresAt: policyDraft.expiresAt || null,
         }),
       });
@@ -717,8 +729,32 @@ export default function APIPageClient({ machineId }) {
     setPolicyDraft({
       maxDevices: String(key.maxDevices ?? 0),
       allowedModels: (key.allowedModels || []).join(", "),
-      boundDevices: (key.boundDevices || []).join(", "),
-      expiresAt: key.expiresAt ? key.expiresAt.slice(0, 16) : "",
+      boundDevices: [...(key.boundDevices || [])],
+      tokenLimit: key.tokenLimit > 0 ? String(key.tokenLimit) : "",
+      expiresAt: isoToLocalInput(key.expiresAt),
+    });
+  };
+
+  const handleResetDevices = (key) => {
+    setConfirmState({
+      title: "Reset Devices",
+      message: `Unbind all ${(key.boundDevices || []).length} device(s) from "${key.name}"?\n\nBound devices will be able to re-bind on their next request (if slots remain).`,
+      onConfirm: async () => {
+        setConfirmState(null);
+        try {
+          const res = await fetch(`/api/keys/${key.id}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ boundDevices: [] }),
+          });
+          if (res.ok) {
+            const { key: updated } = await res.json();
+            setKeys((prev) => prev.map((k) => (k.id === key.id ? updated : k)));
+          }
+        } catch (error) {
+          console.log("Error resetting devices:", error);
+        }
+      },
     });
   };
 
@@ -1248,10 +1284,64 @@ export default function APIPageClient({ machineId }) {
                           placeholder="glm/glm-5.3, openrouter/openai/gpt-4o-mini"
                         />
                         <Input
-                          label="Bound Devices (comma separated — remove to unbind)"
-                          value={policyDraft.boundDevices}
-                          onChange={(e) => setPolicyDraft((d) => ({ ...d, boundDevices: e.target.value }))}
+                          label="Token Limit (empty = unlimited)"
+                          type="number"
+                          min="0"
+                          value={policyDraft.tokenLimit}
+                          onChange={(e) => setPolicyDraft((d) => ({ ...d, tokenLimit: e.target.value }))}
+                          placeholder="e.g. 5000000"
                         />
+                        <div className="flex flex-col gap-1">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-medium text-text-muted">
+                              {`Bound Devices (${(policyDraft.boundDevices || []).length}${Number(policyDraft.maxDevices) > 0 ? ` / ${Number(policyDraft.maxDevices)}` : ""})`}
+                            </span>
+                            {(policyDraft.boundDevices || []).length > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => setPolicyDraft((d) => ({ ...d, boundDevices: [] }))}
+                                className="text-xs text-red-500 hover:underline"
+                              >
+                                Unbind all
+                              </button>
+                            )}
+                          </div>
+                          {(policyDraft.boundDevices || []).length === 0 ? (
+                            <p className="text-xs text-text-muted">
+                              No devices bound — the first device that uses this key claims a slot automatically.
+                            </p>
+                          ) : (
+                            <div className="flex flex-col gap-1">
+                              {policyDraft.boundDevices.map((d) => (
+                                <div key={d} className="flex items-center gap-2 rounded border border-border-subtle bg-surface-2 px-2 py-1">
+                                  <span className="material-symbols-outlined text-[14px] text-text-muted">computer</span>
+                                  <code className="flex-1 truncate font-mono text-xs" title={d}>{d}</code>
+                                  <button
+                                    type="button"
+                                    onClick={() => copy(d, "dev-" + d)}
+                                    title="Copy device ID"
+                                    className="p-1 rounded hover:bg-surface-3 text-text-muted hover:text-primary transition-colors"
+                                  >
+                                    <span className="material-symbols-outlined text-[14px]">{copied === "dev-" + d ? "check" : "content_copy"}</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setPolicyDraft((prev) => ({ ...prev, boundDevices: prev.boundDevices.filter((x) => x !== d) }))}
+                                    title="Unbind this device"
+                                    className="p-1 rounded hover:bg-red-500/10 text-red-500 transition-colors"
+                                  >
+                                    <span className="material-symbols-outlined text-[14px]">link_off</span>
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          {Number(policyDraft.maxDevices) > 0 && (policyDraft.boundDevices || []).length >= Number(policyDraft.maxDevices) && (
+                            <p className="text-xs text-orange-500">
+                              All {Number(policyDraft.maxDevices)} slot(s) used — unbind a device or raise Max Devices, or new devices will be rejected.
+                            </p>
+                          )}
+                        </div>
                       </div>
                       <div className="flex flex-col gap-1">
                         <Input
@@ -1272,7 +1362,7 @@ export default function APIPageClient({ machineId }) {
                               type="button"
                               onClick={() => setPolicyDraft((d) => ({
                                 ...d,
-                                expiresAt: new Date(Date.now() + p.ms).toISOString().slice(0, 16),
+                                expiresAt: isoToLocalInput(new Date(Date.now() + p.ms).toISOString()),
                               }))}
                               className="px-2 py-0.5 text-xs rounded border border-border text-text-muted hover:text-primary hover:border-primary/40 transition-colors"
                             >
@@ -1313,23 +1403,22 @@ export default function APIPageClient({ machineId }) {
                       >
                         Edit access policy
                       </button>
-                      <button
-                        onClick={() => {
-                          setEditingPolicyId(key.id);
-                          setPolicyDraft({
-                            maxDevices: String(key.maxDevices ?? 0),
-                            allowedModels: (key.allowedModels || []).join(", "),
-                            boundDevices: "",
-                            expiresAt: key.expiresAt ? key.expiresAt.slice(0, 16) : "",
-                          });
-                        }}
-                        className="text-xs text-primary underline hover:opacity-80 text-left"
-                        title="Unbind all devices so they can re-bind fresh"
-                      >
-                        {"Reset devices ("}
-                        {(key.boundDevices || []).length}
-                        {")"}
-                      </button>
+                      {(key.boundDevices || []).length > 0 && (
+                        <button
+                          onClick={() => handleResetDevices(key)}
+                          className="text-xs text-primary underline hover:opacity-80 text-left"
+                          title="Unbind all devices so they can re-bind fresh"
+                        >
+                          {"Reset devices ("}
+                          {(key.boundDevices || []).length}
+                          {")"}
+                        </button>
+                      )}
+                      {key.tokenLimit > 0 && (
+                        <p className="text-xs text-text-muted">
+                          {`Token limit: ${key.tokenLimit.toLocaleString()}`}
+                        </p>
+                      )}
                     </div>
                   )}
                   {key.isActive === false && (
@@ -1381,6 +1470,7 @@ export default function APIPageClient({ machineId }) {
           setNewKeyMaxDevices("");
           setNewKeyAllowedModels("");
           setNewKeyExpiresAt("");
+          setNewKeyTokenLimit("");
         }}
       >
         <div className="flex flex-col gap-4">
@@ -1413,6 +1503,19 @@ export default function APIPageClient({ machineId }) {
           </div>
           <div className="flex flex-col gap-1">
             <Input
+              label="Token Limit (optional, 0 = unlimited)"
+              type="number"
+              min="0"
+              value={newKeyTokenLimit}
+              onChange={(e) => setNewKeyTokenLimit(e.target.value)}
+              placeholder="e.g. 5000000"
+            />
+            <p className="text-xs text-text-muted">
+              Lifetime budget of prompt + completion tokens for this key. Requests are rejected once it is used up.
+            </p>
+          </div>
+          <div className="flex flex-col gap-1">
+            <Input
               label="Valid Until (optional — calendar/time picker)"
               type="datetime-local"
               value={newKeyExpiresAt}
@@ -1433,6 +1536,7 @@ export default function APIPageClient({ machineId }) {
                 setNewKeyMaxDevices("");
                 setNewKeyAllowedModels("");
                 setNewKeyExpiresAt("");
+                setNewKeyTokenLimit("");
               }}
               variant="ghost"
               fullWidth

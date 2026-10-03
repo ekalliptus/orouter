@@ -18,12 +18,13 @@ export async function GET(request, { params }) {
 
 // PUT /api/keys/[id] - Update key
 // Policy fields: isActive, maxDevices (0 = unlimited), allowedModels (array),
-// boundDevices (array — lets the user unbind a device manually).
+// boundDevices (array — lets the user unbind a device manually), expiresAt,
+// tokenLimit (lifetime token budget, 0 = unlimited).
 export async function PUT(request, { params }) {
   try {
     const { id } = await params;
     const body = await request.json();
-    const { isActive, maxDevices, allowedModels, boundDevices, name, expiresAt } = body;
+    const { isActive, maxDevices, allowedModels, boundDevices, name, expiresAt, tokenLimit } = body;
 
     const existing = await getApiKeyById(id);
     if (!existing) {
@@ -61,6 +62,14 @@ export async function PUT(request, { params }) {
       } else {
         updateData.expiresAt = new Date(expiresAt).toISOString();
       }
+    }
+    if (tokenLimit !== undefined) {
+      // 0 clears the budget; otherwise must be a non-negative number.
+      const n = Number(tokenLimit);
+      if (!Number.isFinite(n) || n < 0) {
+        return NextResponse.json({ error: "tokenLimit must be a number >= 0" }, { status: 400 });
+      }
+      updateData.tokenLimit = Math.floor(n);
     }
 
     const updated = await updateApiKey(id, updateData);

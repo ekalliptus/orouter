@@ -19,10 +19,12 @@ export async function GET() {
 // Optional policy fields:
 //   maxDevices    — number, 0 = unlimited
 //   allowedModels — array of model ids; empty = all models
+//   expiresAt     — ISO date / datetime-local string; null = no expiry
+//   tokenLimit    — number, lifetime token budget; 0 = unlimited
 export async function POST(request) {
   try {
     const body = await request.json();
-    const { name, maxDevices, allowedModels } = body;
+    const { name, maxDevices, allowedModels, expiresAt, tokenLimit } = body;
 
     if (!name) {
       return NextResponse.json({ error: "Name is required" }, { status: 400 });
@@ -32,10 +34,23 @@ export async function POST(request) {
     const machineId = await getConsistentMachineId();
     const apiKey = await createApiKey(name, machineId);
 
-    if (Array.isArray(allowedModels) || Number.isFinite(Number(maxDevices))) {
-      const patch = {};
-      if (Number.isFinite(Number(maxDevices))) patch.maxDevices = Math.max(0, Math.floor(Number(maxDevices)));
-      if (Array.isArray(allowedModels)) patch.allowedModels = allowedModels.filter((m) => typeof m === "string");
+    const patch = {};
+    if (Number.isFinite(Number(maxDevices))) patch.maxDevices = Math.max(0, Math.floor(Number(maxDevices)));
+    if (Array.isArray(allowedModels)) patch.allowedModels = allowedModels.filter((m) => typeof m === "string");
+    if (expiresAt !== undefined && expiresAt !== null && expiresAt !== "") {
+      if (Number.isNaN(new Date(expiresAt).getTime())) {
+        return NextResponse.json({ error: "expiresAt must be a valid date" }, { status: 400 });
+      }
+      patch.expiresAt = new Date(expiresAt).toISOString();
+    }
+    if (tokenLimit !== undefined && tokenLimit !== null && tokenLimit !== "") {
+      const n = Number(tokenLimit);
+      if (!Number.isFinite(n) || n < 0) {
+        return NextResponse.json({ error: "tokenLimit must be a number >= 0" }, { status: 400 });
+      }
+      patch.tokenLimit = Math.floor(n);
+    }
+    if (Object.keys(patch).length > 0) {
       await updateApiKey(apiKey.id, patch);
       Object.assign(apiKey, patch);
     }
@@ -47,6 +62,8 @@ export async function POST(request) {
       machineId: apiKey.machineId,
       maxDevices: apiKey.maxDevices,
       allowedModels: apiKey.allowedModels,
+      expiresAt: apiKey.expiresAt ?? null,
+      tokenLimit: apiKey.tokenLimit ?? 0,
     }, { status: 201 });
   } catch (error) {
     console.log("Error creating key:", error);
