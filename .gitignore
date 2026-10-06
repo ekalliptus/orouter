@@ -98,3 +98,6 @@ vue-web/node_modules/
 .next-previous-build/
 .build-redesign.log
 .build-data/
+
+# ZCode workspace artifact
+.zcodeignore
