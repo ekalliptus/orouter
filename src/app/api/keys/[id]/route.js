@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { deleteApiKey, getApiKeyById, updateApiKey } from "@/lib/localDb";
+import { parsePolicyInput } from "../policyInput.js";
 
 // GET /api/keys/[id] - Get single key
 export async function GET(request, { params }) {
@@ -16,61 +17,27 @@ export async function GET(request, { params }) {
   }
 }
 
-// PUT /api/keys/[id] - Update key
-// Policy fields: isActive, maxDevices (0 = unlimited), allowedModels (array),
-// boundDevices (array — lets the user unbind a device manually), expiresAt,
-// tokenLimit (lifetime token budget, 0 = unlimited).
+// PUT /api/keys/[id] - Update key. Accepts isActive/name plus the policy fields
+// validated by parsePolicyInput (maxDevices, allowedModels, boundDevices,
+// expiresAt, tokenLimit).
 export async function PUT(request, { params }) {
   try {
     const { id } = await params;
     const body = await request.json();
-    const { isActive, maxDevices, allowedModels, boundDevices, name, expiresAt, tokenLimit } = body;
 
     const existing = await getApiKeyById(id);
     if (!existing) {
       return NextResponse.json({ error: "Key not found" }, { status: 404 });
     }
 
-    const updateData = {};
-    if (isActive !== undefined) updateData.isActive = isActive;
-    if (name !== undefined) updateData.name = name;
-    if (maxDevices !== undefined) {
-      const n = Number(maxDevices);
-      if (!Number.isFinite(n) || n < 0) {
-        return NextResponse.json({ error: "maxDevices must be a number >= 0" }, { status: 400 });
-      }
-      updateData.maxDevices = Math.floor(n);
+    const { patch, error } = parsePolicyInput(body);
+    if (error) {
+      return NextResponse.json({ error }, { status: 400 });
     }
-    if (allowedModels !== undefined) {
-      if (!Array.isArray(allowedModels) || allowedModels.some((m) => typeof m !== "string")) {
-        return NextResponse.json({ error: "allowedModels must be an array of strings" }, { status: 400 });
-      }
-      updateData.allowedModels = allowedModels;
-    }
-    if (boundDevices !== undefined) {
-      if (!Array.isArray(boundDevices) || boundDevices.some((d) => typeof d !== "string")) {
-        return NextResponse.json({ error: "boundDevices must be an array of strings" }, { status: 400 });
-      }
-      updateData.boundDevices = boundDevices;
-    }
-    if (expiresAt !== undefined) {
-      // null/empty clears expiry; otherwise must be a valid date.
-      if (expiresAt === null || expiresAt === "") {
-        updateData.expiresAt = null;
-      } else if (Number.isNaN(new Date(expiresAt).getTime())) {
-        return NextResponse.json({ error: "expiresAt must be a valid date" }, { status: 400 });
-      } else {
-        updateData.expiresAt = new Date(expiresAt).toISOString();
-      }
-    }
-    if (tokenLimit !== undefined) {
-      // 0 clears the budget; otherwise must be a non-negative number.
-      const n = Number(tokenLimit);
-      if (!Number.isFinite(n) || n < 0) {
-        return NextResponse.json({ error: "tokenLimit must be a number >= 0" }, { status: 400 });
-      }
-      updateData.tokenLimit = Math.floor(n);
-    }
+
+    const updateData = { ...patch };
+    if (body.isActive !== undefined) updateData.isActive = body.isActive;
+    if (body.name !== undefined) updateData.name = body.name;
 
     const updated = await updateApiKey(id, updateData);
 

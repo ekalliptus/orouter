@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getApiKeys, createApiKey, updateApiKey } from "@/lib/localDb";
 import { getConsistentMachineId } from "@/shared/utils/machineId";
+import { parsePolicyInput } from "./policyInput.js";
 
 export const dynamic = "force-dynamic";
 
@@ -15,41 +16,24 @@ export async function GET() {
   }
 }
 
-// POST /api/keys - Create new API key
-// Optional policy fields:
-//   maxDevices    — number, 0 = unlimited
-//   allowedModels — array of model ids; empty = all models
-//   expiresAt     — ISO date / datetime-local string; null = no expiry
-//   tokenLimit    — number, lifetime token budget; 0 = unlimited
+// POST /api/keys - Create new API key. Policy fields (maxDevices, allowedModels,
+// expiresAt, tokenLimit) are optional and validated by parsePolicyInput.
 export async function POST(request) {
   try {
     const body = await request.json();
-    const { name, maxDevices, allowedModels, expiresAt, tokenLimit } = body;
-
-    if (!name) {
+    if (!body.name) {
       return NextResponse.json({ error: "Name is required" }, { status: 400 });
+    }
+
+    const { patch, error } = parsePolicyInput(body);
+    if (error) {
+      return NextResponse.json({ error }, { status: 400 });
     }
 
     // Always get machineId from server
     const machineId = await getConsistentMachineId();
-    const apiKey = await createApiKey(name, machineId);
+    const apiKey = await createApiKey(body.name, machineId);
 
-    const patch = {};
-    if (Number.isFinite(Number(maxDevices))) patch.maxDevices = Math.max(0, Math.floor(Number(maxDevices)));
-    if (Array.isArray(allowedModels)) patch.allowedModels = allowedModels.filter((m) => typeof m === "string");
-    if (expiresAt !== undefined && expiresAt !== null && expiresAt !== "") {
-      if (Number.isNaN(new Date(expiresAt).getTime())) {
-        return NextResponse.json({ error: "expiresAt must be a valid date" }, { status: 400 });
-      }
-      patch.expiresAt = new Date(expiresAt).toISOString();
-    }
-    if (tokenLimit !== undefined && tokenLimit !== null && tokenLimit !== "") {
-      const n = Number(tokenLimit);
-      if (!Number.isFinite(n) || n < 0) {
-        return NextResponse.json({ error: "tokenLimit must be a number >= 0" }, { status: 400 });
-      }
-      patch.tokenLimit = Math.floor(n);
-    }
     if (Object.keys(patch).length > 0) {
       await updateApiKey(apiKey.id, patch);
       Object.assign(apiKey, patch);

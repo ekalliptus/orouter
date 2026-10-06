@@ -118,19 +118,6 @@ export async function getApiKeyRow(key) {
 }
 
 /**
- * Total tokens (prompt + completion) recorded in usageHistory for a raw key
- * value. Covers retained history only — the same scope the usage dashboard shows.
- */
-export async function getApiKeyTokensUsed(key) {
-  const db = await getAdapter();
-  const row = db.get(
-    `SELECT COALESCE(SUM(promptTokens + completionTokens), 0) AS total FROM usageHistory WHERE apiKey = ?`,
-    [key]
-  );
-  return row?.total ?? 0;
-}
-
-/**
  * Bind a device to a key if slots remain. Returns:
  *   { ok: true, bound: boolean }
  *   { ok: false, reason: "device_limit" }

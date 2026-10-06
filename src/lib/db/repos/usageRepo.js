@@ -369,6 +369,17 @@ export async function saveRequestUsage(entry) {
   }
 }
 
+// Lifetime token total (prompt + completion) recorded for a raw API-key value.
+// Covers retained history only — the same scope the usage dashboard shows.
+export async function getApiKeyTokensUsed(key) {
+  const db = await getAdapter();
+  const row = db.get(
+    `SELECT COALESCE(SUM(promptTokens + completionTokens), 0) AS total FROM usageHistory WHERE apiKey = ?`,
+    [key]
+  );
+  return row?.total ?? 0;
+}
+
 export async function getApiKeyUsage(id, { period = "24h", page = 1, pageSize = 20 } = {}) {
   if (typeof id !== "string" || !/^[a-zA-Z0-9_-]{1,128}$/.test(id)
       || !Object.hasOwn(PERIOD_MS, period)

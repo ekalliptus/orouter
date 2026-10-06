@@ -74,10 +74,8 @@ export const KIMI_CODING_BASE_URL = "https://api.kimi.com/coding/v1/messages";
 export const OPENAI_COMPAT_BASE = "https://api.openai.com/v1";
 export const ANTHROPIC_COMPAT_BASE = "https://api.anthropic.com/v1";
 
-// Antigravity IDE Desktop client fingerprint. 3.x unlocks the per-tier model
-// keys (gemini-3.7/3.8-flash-high|medium|low) in fetchAvailableModels; older
-// 2.x clients only get the "-tiered" umbrella key. Verified live 2026-10-03:
-// the tiered + thinkingConfig path still works under 3.2.1.
+// Antigravity IDE Desktop client fingerprint. Client 3.x+ unlocks the per-tier
+// model keys (gemini-3.7/3.8-flash-{high,medium,low}) in fetchAvailableModels.
 // Keep the darwin/arm64 UA even when 9router runs on Linux: the provider
 // profile is intentionally matching the IDE client, not the server host.
 export const ANTIGRAVITY_IDE_VERSION = "3.2.1";

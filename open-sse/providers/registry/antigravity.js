@@ -62,10 +62,8 @@ export default {
     { id: "gemini-3.1-pro-low", name: "Gemini 3.1 Pro (Low)" },
     { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6 (Thinking)" },
     { id: "claude-opus-4-6-thinking", name: "Claude Opus 4.6 (Thinking)" },
-    // Claude 5.5 — live per-tier keys (claude-opus-5-5-{low,medium,high}, same for
-    // sonnet). Plain "claude-opus-5-5" 404s; the tier is part of the key name.
-    // Only some accounts have these provisioned (fetchAvailableModels) — the
-    // account fallback skips connections that 404.
+    // Claude 5.5 — the tier is part of the upstream key name (plain id 404s).
+    // Not all accounts have these provisioned; account fallback skips 404s.
     { id: "claude-opus-5-5-high", name: "Claude Opus 5.5 (High)" },
     { id: "claude-opus-5-5-medium", name: "Claude Opus 5.5 (Medium)" },
     { id: "claude-opus-5-5-low", name: "Claude Opus 5.5 (Low)" },
