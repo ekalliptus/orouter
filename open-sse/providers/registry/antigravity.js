@@ -62,11 +62,16 @@ export default {
     { id: "gemini-3.1-pro-low", name: "Gemini 3.1 Pro (Low)" },
     { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6 (Thinking)" },
     { id: "claude-opus-4-6-thinking", name: "Claude Opus 4.6 (Thinking)" },
-    // Claude 5.5 — wire ids confirmed from the official IDE language server
-    // binary (claude-opus-5-5@default; sonnet follows the same convention).
-    // Server-side gated: 404s until Google enables them for the account.
-    { id: "claude-opus-5-5", name: "Claude Opus 5.5 (Thinking)" },
-    { id: "claude-sonnet-5-5", name: "Claude Sonnet 5.5 (Thinking)" },
+    // Claude 5.5 — live per-tier keys (claude-opus-5-5-{low,medium,high}, same for
+    // sonnet). Plain "claude-opus-5-5" 404s; the tier is part of the key name.
+    // Only some accounts have these provisioned (fetchAvailableModels) — the
+    // account fallback skips connections that 404.
+    { id: "claude-opus-5-5-high", name: "Claude Opus 5.5 (High)" },
+    { id: "claude-opus-5-5-medium", name: "Claude Opus 5.5 (Medium)" },
+    { id: "claude-opus-5-5-low", name: "Claude Opus 5.5 (Low)" },
+    { id: "claude-sonnet-5-5-high", name: "Claude Sonnet 5.5 (High)" },
+    { id: "claude-sonnet-5-5-medium", name: "Claude Sonnet 5.5 (Medium)" },
+    { id: "claude-sonnet-5-5-low", name: "Claude Sonnet 5.5 (Low)" },
     { id: "gpt-oss-120b-medium", name: "GPT-OSS 120B (Medium)" },
     { id: "gemini-3-flash", name: "Gemini 3 Flash", thinking: false },
     // Image generation models
