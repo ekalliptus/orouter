@@ -6,7 +6,7 @@ export default {
   alias: "ag",
   uiAlias: "ag",
   display: {
-    name: "Antigravity",
+    name: "Antigravity CLI",
     icon: "rocket_launch",
     color: "#F59E0B",
     website: "https://antigravity.google",
@@ -16,7 +16,10 @@ export default {
     deprecated: true,
     deprecationNotice: "RISK_NOTICE",
   },
-  category: "oauth",
+  // "free" not "oauth": surfaces the card in the dashboard's Free Tier
+  // section (in place of the hidden gemini-cli). OAuth connect flow is
+  // unaffected — detail page treats FREE_PROVIDERS entries as isOAuth too.
+  category: "free",
   serviceKinds: ["llm", "image"],
   transport: {
     baseUrls: [ANTIGRAVITY_IDE_BASE_URL],

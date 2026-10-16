@@ -18,6 +18,10 @@ export default {
     deprecationNotice: "RISK_NOTICE",
   },
   category: "free",
+  // Hidden from dashboard lists — replaced by Antigravity in the Free Tier
+  // section (same Google free quota, actively used). Routing still works
+  // if a connection ever exists.
+  hidden: true,
   transport: {
     baseUrl: "https://cloudcode-pa.googleapis.com/v1internal",
     format: "gemini-cli",
