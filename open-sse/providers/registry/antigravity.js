@@ -48,12 +48,11 @@ export default {
     clientSecret: "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",
   },
   models: [
-    // Gemini 4 Argon — pre-registered 2026-10-15: no account returns this key in
-    // fetchAvailableModels yet (checked all connections, fingerprints 3.2.1–5.0.0).
-    // Until Google provisions it, requests 404 and modelLock skips ~2m, like Claude 5.5.
-    { id: "gemini-4-argon-high", name: "Gemini 4 Argon (High)", upstreamModelId: "gemini-4-argon-tiered(high)" },
-    { id: "gemini-4-argon-medium", name: "Gemini 4 Argon (Medium)", upstreamModelId: "gemini-4-argon-tiered(medium)" },
-    { id: "gemini-4-argon-low", name: "Gemini 4 Argon (Low)", upstreamModelId: "gemini-4-argon-tiered(low)" },
+    // Gemini 4 Argon — single non-tiered wire id, confirmed via CLI-fingerprint
+    // discovery (2026-10-23; the IDE fingerprint never lists it). Entitlement-
+    // gated: free accounts see gemini-4-argon-disabled ("Unavailable — Ultra
+    // and paid Pro plan subscribers"), calls reject until an account upgrades.
+    // Requests must use ANTIGRAVITY_CLI_USER_AGENT (see executors/antigravity.js).
     { id: "gemini-4-argon", name: "Gemini 4 Argon" },
     { id: "gemini-3.8-flash-high", name: "Gemini 3.8 Flash (High)", upstreamModelId: "gemini-3.8-flash-tiered(high)" },
     { id: "gemini-3.8-flash-medium", name: "Gemini 3.8 Flash (Medium)", upstreamModelId: "gemini-3.8-flash-tiered(medium)" },

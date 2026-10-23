@@ -20,6 +20,13 @@ function rewriteAntigravityUserAgent(userAgent, version) {
 }
 
 function applyAntigravityIdeVersionOverride(bodyBuffer, headers) {
+  // Never touch aidev_client CLI UAs (agy / VS Code extension): their version
+  // gates argon-tier model access — rewriting it back to the IDE version
+  // would silently drop those models from the client.
+  if (typeof headers?.["user-agent"] === "string" && headers["user-agent"].includes("aidev_client")) {
+    return { bodyBuffer, headers, applied: false, version: ANTIGRAVITY_IDE_VERSION };
+  }
+
   if (!ANTIGRAVITY_IDE_VERSION_OVERRIDE_ENABLED) {
     return { bodyBuffer, headers, applied: false, version: ANTIGRAVITY_IDE_VERSION };
   }

@@ -3,14 +3,15 @@
  */
 
 import { CLIENT_METADATA } from "../../config/appConstants.js";
-import { ANTIGRAVITY_IDE_USER_AGENT, ANTIGRAVITY_IDE_VERSION, ANTIGRAVITY_OAUTH_CLIENT } from "../../providers/shared.js";
+import { ANTIGRAVITY_CLI_USER_AGENT, ANTIGRAVITY_OAUTH_CLIENT } from "../../providers/shared.js";
 import { U, parseResetTime, normalizeCloudCodeProjectId, fetchWithTimeout } from "./shared.js";
 
-// Antigravity API config (from Quotio) — urls from registry, oauth client + dynamic UA kept here
+// Antigravity API config (from Quotio) — urls from registry, oauth client + dynamic UA kept here.
+// Discovery uses the CLI fingerprint: the IDE UA never sees argon-tier models.
 const ANTIGRAVITY_CONFIG = {
   ...U("antigravity"),
   ...ANTIGRAVITY_OAUTH_CLIENT,
-  userAgent: ANTIGRAVITY_IDE_USER_AGENT,
+  userAgent: ANTIGRAVITY_CLI_USER_AGENT,
 };
 
 /**
@@ -128,8 +129,6 @@ export async function getAntigravityUsage(accessToken, providerSpecificData, pro
         "Authorization": `Bearer ${accessToken}`,
         "User-Agent": ANTIGRAVITY_CONFIG.userAgent,
         "Content-Type": "application/json",
-        "X-Client-Name": "antigravity",
-        "X-Client-Version": ANTIGRAVITY_IDE_VERSION,
       },
       body: JSON.stringify({
         ...(projectId ? { project: projectId } : {})
@@ -161,11 +160,8 @@ export async function getAntigravityUsage(accessToken, providerSpecificData, pro
     if (data.models) {
       // Filter only recommended/important models (must match PROVIDER_MODELS ag ids)
       const importantModels = [
-        'gemini-4-argon-tiered',
-        'gemini-4-argon-high',
-        'gemini-4-argon-medium',
-        'gemini-4-argon-low',
         'gemini-4-argon',
+        'gemini-4-argon-disabled',
         'gemini-3.8-flash-high',
         'gemini-3.8-flash-medium',
         'gemini-3.8-flash-low',

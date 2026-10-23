@@ -82,6 +82,11 @@ export const ANTIGRAVITY_IDE_VERSION = "3.2.1";
 export const ANTIGRAVITY_IDE_BASE_URL = "https://daily-cloudcode-pa.googleapis.com";
 export const ANTIGRAVITY_IDE_USER_AGENT = `antigravity/ide/${ANTIGRAVITY_IDE_VERSION} darwin/arm64`;
 
+// Argon-tier models are only visible to the aidev_client CLI surface — the IDE
+// fingerprint never lists them in fetchAvailableModels (verified 2026-10-23
+// by capturing the real agy CLI UA). cl= is agy 1.2.16's build changelist.
+export const ANTIGRAVITY_CLI_USER_AGENT = `antigravity/cli/1.2.16 (aidev_client; os_type=${platform() === "win32" ? "windows" : platform()}; arch=${arch()}; cl=992658124; auth_method=consumer)`;
+
 // Antigravity OAuth client credentials (public CLI client — duplicated in usage.js + src/lib/oauth)
 export const ANTIGRAVITY_OAUTH_CLIENT = {
   clientId: "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com",

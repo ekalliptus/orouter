@@ -2,6 +2,7 @@ import crypto from "crypto";
 import { BaseExecutor } from "./base.js";
 import { PROVIDERS } from "../config/providers.js";
 import { OAUTH_ENDPOINTS, ANTIGRAVITY_HEADERS, AG_DEFAULT_TOOLS, AG_TOOL_SUFFIX } from "../config/appConstants.js";
+import { ANTIGRAVITY_CLI_USER_AGENT } from "../providers/shared.js";
 import { HTTP_STATUS } from "../config/runtimeConfig.js";
 import { resolveSessionId } from "../utils/sessionManager.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
@@ -126,14 +127,20 @@ export class AntigravityExecutor extends BaseExecutor {
   // sessionId comes from transformRequest output; base.execute runs transformRequest before
   // buildHeaders, so we read it from instance state cached there (fallback: explicit arg).
   buildHeaders(credentials, stream = true, sessionId = null) {
+    // Argon-tier models only resolve under the aidev_client CLI fingerprint —
+    // the IDE UA gets them filtered out upstream. Cache set in transformRequest.
+    const userAgent = /gemini-4-argon/.test(this._lastModel || "")
+      ? ANTIGRAVITY_CLI_USER_AGENT
+      : (this.config.headers?.["User-Agent"] || ANTIGRAVITY_HEADERS["User-Agent"]);
     return {
       "Content-Type": "application/json",
       "Authorization": `Bearer ${credentials.accessToken}`,
-      "User-Agent": this.config.headers?.["User-Agent"] || ANTIGRAVITY_HEADERS["User-Agent"],
+      "User-Agent": userAgent,
     };
   }
 
   transformRequest(model, body, stream, credentials) {
+    this._lastModel = model; // cached for buildHeaders (base.execute order)
     const projectId = credentials?.projectId || this.generateProjectId();
 
     // OpenAI clients may include stream_options even for non-streaming calls.
