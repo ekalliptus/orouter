@@ -36,6 +36,11 @@ export default {
     },
   },
   models: [
+    // Gemini 4 Argon — live in the free Gemini mobile app (2026-10); public
+    // API availability unverified (needs a real AI Studio key to probe —
+    // auth errors mask model existence). Harmless 404 + modelLock skip if
+    // the key's tier doesn't include it.
+    { id: "gemini-4-argon", name: "Gemini 4 Argon" },
     { id: "gemini-3.7-flash", name: "Gemini 3.7 Flash" },
     { id: "gemini-3.6-flash", name: "Gemini 3.6 Flash" },
     { id: "gemini-3.5-flash-lite", name: "Gemini 3.5 Flash Lite" },
