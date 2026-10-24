@@ -1,0 +1,17 @@
+[Unit]
+Description=ORouter - AI Infrastructure Management (9Router)
+After=network.target
+
+[Service]
+Type=simple
+User=ekalliptus
+WorkingDirectory=/opt/orouter
+Environment=PORT=20128
+Environment=HOSTNAME=0.0.0.0
+Environment=NEXT_PRIVATE_STANDALONE_CONFIG=1
+ExecStart=/usr/bin/node custom-server.js --port 20128
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

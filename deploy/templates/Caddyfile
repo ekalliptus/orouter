@@ -1,0 +1,11 @@
+__DOMAIN__ {
+	request_body {
+		max_size 50MB
+	}
+	@static path /_next/static/*
+	header @static Cache-Control "public, max-age=31536000, immutable"
+	header / Cache-Control "no-cache"
+	reverse_proxy 127.0.0.1:20128 {
+		flush_interval -1
+	}
+}
