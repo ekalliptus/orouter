@@ -152,7 +152,9 @@ async function readChatState(page) {
 }
 
 // Poll the DOM until the reply settles, emitting content deltas as they grow.
-async function pollTextReply({ page, baseCount = 0, baseText = "", timeoutMs = 60000, firstTokenMs = 30000, signal, onDelta }) {
+// firstTokenMs is generous: argon at High thinking took ~24s to first token
+// in testing, and heavier prompts can think longer.
+async function pollTextReply({ page, baseCount = 0, baseText = "", timeoutMs = 180000, firstTokenMs = 90000, signal, onDelta }) {
   const startedAt = Date.now();
   let emitted = "";
   let lastSeen = "";
@@ -528,13 +530,16 @@ export class GeminiWebExecutor extends BaseExecutor {
 
   async execute({ model, body, stream, credentials, signal, log }) {
     const input = body || {};
-    const tools = input.tools;
-    const legacyFunctions = input.functions;
-    if (tools != null && (!Array.isArray(tools) || tools.length > 0)) {
-      return { response: errorResponse(400, "Gemini Web does not support OpenAI function tools"), url: GEMINI_APP_URL, headers: {}, transformedBody: body };
-    }
-    if (legacyFunctions != null && (!Array.isArray(legacyFunctions) || legacyFunctions.length > 0)) {
-      return { response: errorResponse(400, "Gemini Web does not support legacy function tools"), url: GEMINI_APP_URL, headers: {}, transformedBody: body };
+    // Tool definitions are stripped, not rejected: agent clients (ZCode etc.)
+    // always send them, and a hard 400 makes the provider unusable there. The
+    // web UI cannot produce tool_calls — responses stay plain text.
+    const toolCount = Array.isArray(input.tools) ? input.tools.length : input.tools ? 1 : 0;
+    const legacyCount = Array.isArray(input.functions) ? input.functions.length : input.functions ? 1 : 0;
+    if (toolCount > 0 || legacyCount > 0) {
+      delete input.tools;
+      delete input.functions;
+      delete input.tool_choice;
+      log?.warn?.("GEMINI-WEB", `Stripped ${toolCount + legacyCount} tool definition(s) — the web UI cannot execute tools`);
     }
     const rawEffort = typeof input.reasoning_effort === "string" && input.reasoning_effort.trim().length > 0 ? input.reasoning_effort.trim().toLowerCase() : null;
     const wantsThinking = rawEffort !== null && !NO_THINKING_EFFORTS.has(rawEffort);
