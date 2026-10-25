@@ -65,7 +65,8 @@ async function readControlText(el) {
   return null;
 }
 
-// Click a UI toggle and confirm the active-mode indicator now matches.
+// Click a UI toggle, attempt to select the matching menu item (for model
+// descriptors), and confirm the active-mode indicator now matches.
 async function confirmControl(page, descriptor, timeoutMs = 5000) {
   if (descriptor.isDefault) return { confirmed: true, descriptor };
   const { toggleSelector, activeIndicatorSelector, expectedIndicatorPattern } = descriptor;
@@ -75,6 +76,23 @@ async function confirmControl(page, descriptor, timeoutMs = 5000) {
   const toggle = await page.waitForSelector(toggleSelector, { timeout: timeoutMs }).catch(() => null);
   if (!toggle) return { confirmed: false, reason: "control_not_found", descriptor };
   await toggle.click();
+  await page.waitForTimeout(600);
+  // Model menus list selectable items; extended-thinking is a plain toggle.
+  // Try to click the item matching the pattern before reading the indicator —
+  // upstream only opened the menu, which verifies but never switches.
+  if (descriptor.id !== "extended-thinking") {
+    try {
+      const items = await page.locator('[role="menuitem"], [role="option"], [role="menu"] button, [role="listbox"] *').all();
+      for (const item of items) {
+        const text = (await item.textContent().catch(() => "")) || "";
+        if (text.trim() && expectedIndicatorPattern.test(text)) {
+          await item.click();
+          await page.waitForTimeout(1200);
+          break;
+        }
+      }
+    } catch {}
+  }
   const indicator = await page.waitForSelector(activeIndicatorSelector, { timeout: timeoutMs }).catch(() => null);
   if (!indicator) return { confirmed: false, reason: "indicator_not_found", descriptor };
   const text = await readControlText(indicator);
@@ -251,6 +269,35 @@ async function launchGeminiBrowser(options) {
   });
 }
 
+// Google DBSC (Device-Bound Session Credentials) binds web sessions to the
+// browser that created them — replaying __Secure-1PSID cookies into a fresh
+// automated browser gets an anonymous session (verified 2026-10-25). The
+// working path is attaching to the user's REAL logged-in Chrome over CDP.
+// Set GEMINI_WEB_CDP_ENDPOINT (or OBSCURA_CDP_ENDPOINT) to e.g.
+// http://127.0.0.1:9222 with Chrome started via --remote-debugging-port=9222.
+function cdpEndpoint() {
+  return process.env.GEMINI_WEB_CDP_ENDPOINT || process.env.OBSCURA_CDP_ENDPOINT || "";
+}
+
+async function acquireSession(cookieHeader) {
+  const endpoint = cdpEndpoint();
+  if (endpoint) {
+    const { chromium } = await lazyImport("playwright-core");
+    const browser = await chromium.connectOverCDP(endpoint);
+    const context = browser.contexts()[0] || (await browser.newContext({ userAgent: GEMINI_WEB_UA }));
+    const page = await context.newPage();
+    return { browser, context, page, owned: false };
+  }
+  const { acquireGeminiBrowser, releaseGeminiBrowser } = await import("./gemini-web/browserLease.js");
+  const browser = await acquireGeminiBrowser(launchGeminiBrowser);
+  const context = await browser.newContext({ userAgent: GEMINI_WEB_UA });
+  if (cookieHeader) {
+    await context.addCookies(toPlaywrightCookies(cookieHeader, ".google.com"));
+  }
+  const page = await context.newPage();
+  return { browser, context, page, owned: true, releaseGeminiBrowser };
+}
+
 function buildNonStreamResponse(content, model, finishReason = "stop") {
   return {
     id: `chatcmpl-${Date.now()}`,
@@ -339,7 +386,8 @@ async function openGeminiApp(page) {
 }
 
 // Wait for the composer to appear; throws the friendliest available error.
-async function waitForComposer(page, getQuotaError, timeoutMs = 10000) {
+// 30s: a freshly authenticated session loads the app shell slowly (~17s).
+async function waitForComposer(page, getQuotaError, timeoutMs = 30000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if ((await page.locator(".ql-editor, [contenteditable='true']").count()) > 0) {
@@ -478,8 +526,8 @@ export class GeminiWebExecutor extends BaseExecutor {
     const rawEffort = typeof input.reasoning_effort === "string" && input.reasoning_effort.trim().length > 0 ? input.reasoning_effort.trim().toLowerCase() : null;
     const wantsThinking = rawEffort !== null && !NO_THINKING_EFFORTS.has(rawEffort);
     const cookieHeader = extractGeminiCookies(credentials);
-    if (!cookieHeader) {
-      return { response: errorResponse(401, "Missing Gemini cookies"), url: GEMINI_APP_URL, headers: {}, transformedBody: body };
+    if (!cookieHeader && !cdpEndpoint()) {
+      return { response: errorResponse(401, "Missing Gemini cookies (or set GEMINI_WEB_CDP_ENDPOINT to attach to a logged-in Chrome)"), url: GEMINI_APP_URL, headers: {}, transformedBody: body };
     }
     const prompt = flattenMessages(input.messages || []);
     const hasUserMessage = (input.messages || []).some(
@@ -490,22 +538,21 @@ export class GeminiWebExecutor extends BaseExecutor {
     }
 
     const requestedModel = model || "gemini-2.5-pro";
-    let browser = null;
-    let context = null;
+    let session = null;
     let removeAbortHandler = null;
     try {
       if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : Error("Request aborted");
-      const { acquireGeminiBrowser, releaseGeminiBrowser } = await import("./gemini-web/browserLease.js");
-      browser = await acquireGeminiBrowser(launchGeminiBrowser);
-      const state = { context: null };
+      session = await acquireSession(cookieHeader);
+      const { browser, context, page, owned } = session;
+      const closePage = async () => {
+        await page.close().catch(() => {});
+        if (owned) await context.close().catch(() => {});
+      };
       removeAbortHandler = () => {
-        state.context?.close().catch(() => {});
+        void closePage();
       };
       signal?.addEventListener("abort", removeAbortHandler, { once: true });
-      context = state.context = await browser.newContext({ userAgent: GEMINI_WEB_UA });
-      await context.addCookies(toPlaywrightCookies(cookieHeader, ".google.com"));
-      const page = await context.newPage();
-      let getQuotaError = await openGeminiApp(page);
+      const getQuotaError = await openGeminiApp(page);
       if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : Error("Request aborted");
       await waitForComposer(page, getQuotaError);
       if (model) {
@@ -549,10 +596,8 @@ export class GeminiWebExecutor extends BaseExecutor {
       if (stream) {
         const encoder = new TextEncoder();
         const pageRef = page;
-        const contextRef = context;
-        const browserRef = browser;
-        context = null;
-        browser = null;
+        const sessionRef = session;
+        session = null;
         const out = new ReadableStream(
           {
             async start(controller) {
@@ -577,8 +622,8 @@ export class GeminiWebExecutor extends BaseExecutor {
                 controller.close();
               } finally {
                 await pageRef.close().catch(() => {});
-                await contextRef.close().catch(() => {});
-                await releaseGeminiBrowser(browserRef);
+                if (sessionRef.owned) await sessionRef.context.close().catch(() => {});
+                await sessionRef.browser.close().catch(() => {});
               }
             },
           },
@@ -623,12 +668,11 @@ export class GeminiWebExecutor extends BaseExecutor {
       return { response: errorResponse(500, message), url: GEMINI_APP_URL, headers: {}, transformedBody: body };
     } finally {
       if (removeAbortHandler) signal?.removeEventListener("abort", removeAbortHandler);
-      try {
-        await context?.close();
-      } catch {}
-      if (browser) {
-        const { releaseGeminiBrowser } = await import("./gemini-web/browserLease.js");
-        await releaseGeminiBrowser(browser);
+      if (session) {
+        await session.page.close().catch(() => {});
+        if (session.owned) await session.context.close().catch(() => {});
+        // For CDP sessions close() only disconnects — the user's Chrome stays.
+        await session.browser.close().catch(() => {});
       }
     }
   }
@@ -637,17 +681,13 @@ export class GeminiWebExecutor extends BaseExecutor {
     void log;
     if (!prompt) throw Error("prompt is required for image generation");
     const cookieHeader = extractGeminiCookies(credentials);
-    if (!cookieHeader) throw Error("Missing Gemini cookies");
+    if (!cookieHeader && !cdpEndpoint()) throw Error("Missing Gemini cookies");
     const images = [];
     for (let i = 0; i < Math.max(1, n); i++) {
-      let browser = null;
-      let context = null;
+      let session = null;
       try {
-        const { acquireGeminiBrowser, releaseGeminiBrowser } = await import("./gemini-web/browserLease.js");
-        browser = await acquireGeminiBrowser(launchGeminiBrowser);
-        context = await browser.newContext({ userAgent: GEMINI_WEB_UA });
-        await context.addCookies(toPlaywrightCookies(cookieHeader, ".google.com"));
-        const page = await context.newPage();
+        session = await acquireSession(cookieHeader);
+        const page = session.page;
         const getQuotaError = await openGeminiApp(page);
         const composer = await waitForComposer(page, getQuotaError);
         await composer.click();
@@ -658,12 +698,10 @@ export class GeminiWebExecutor extends BaseExecutor {
         const image = await pollImageReply(page, { signal });
         images.push(image);
       } finally {
-        try {
-          await context?.close();
-        } catch {}
-        if (browser) {
-          const { releaseGeminiBrowser } = await import("./gemini-web/browserLease.js");
-          await releaseGeminiBrowser(browser);
+        if (session) {
+          await session.page.close().catch(() => {});
+          if (session.owned) await session.context.close().catch(() => {});
+          await session.browser.close().catch(() => {});
         }
       }
     }
