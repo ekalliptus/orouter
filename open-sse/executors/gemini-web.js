@@ -26,7 +26,9 @@ const MODEL_DESCRIPTORS = {
     isDefault: false,
     toggleSelector: '[data-test-id="bard-mode-menu-button"], button[aria-haspopup="menu"][aria-label*="model" i]',
     activeIndicatorSelector: '[data-test-id="bard-mode-menu-button"] .mode-title, [data-test-id="bard-mode-menu-button"]',
-    expectedIndicatorPattern: /\bargon\b/i,
+    // No \b after "argon": the UI glues the thinking level to the model name
+    // ("ArgonTinggi") so a trailing word boundary never matches.
+    expectedIndicatorPattern: /argon/i,
   },
   "gemini-3.7-flash": {
     id: "gemini-3.7-flash",
@@ -73,32 +75,43 @@ async function confirmControl(page, descriptor, timeoutMs = 5000) {
   if (!toggleSelector || !activeIndicatorSelector || !expectedIndicatorPattern) {
     return { confirmed: false, reason: "control_not_found", descriptor };
   }
-  const toggle = await page.waitForSelector(toggleSelector, { timeout: timeoutMs }).catch(() => null);
-  if (!toggle) return { confirmed: false, reason: "control_not_found", descriptor };
-  await toggle.click();
-  await page.waitForTimeout(600);
-  // Model menus list selectable items; extended-thinking is a plain toggle.
-  // Try to click the item matching the pattern before reading the indicator —
-  // upstream only opened the menu, which verifies but never switches.
-  if (descriptor.id !== "extended-thinking") {
-    try {
-      const items = await page.locator('[role="menuitem"], [role="option"], [role="menu"] button, [role="listbox"] *').all();
-      for (const item of items) {
-        const text = (await item.textContent().catch(() => "")) || "";
-        if (text.trim() && expectedIndicatorPattern.test(text)) {
-          await item.click();
-          await page.waitForTimeout(1200);
-          break;
-        }
-      }
-    } catch {}
+  // Retry the open-menu → select-item → verify cycle: the menu sometimes
+  // renders after the first toggle click (fresh chats hydrate late).
+  let lastSeen = "";
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const toggle = await page.waitForSelector(toggleSelector, { timeout: timeoutMs }).catch(() => null);
+    if (!toggle) return { confirmed: false, reason: "control_not_found", descriptor };
+    await toggle.click();
+    await page.waitForTimeout(900);
+    // Model menus list selectable items; extended-thinking is a plain toggle.
+    // Try to click the item matching the pattern before reading the indicator —
+    // upstream only opened the menu, which verifies but never switches.
+    // NOTE: Gemini's menu items are plain elements (role="" on current DOM), so
+    // match menu descendants broadly and click via DOM el.click() — playwright
+    // locator clicks with actionability checks miss these overlay items.
+    if (descriptor.id !== "extended-thinking") {
+      try {
+        await page.evaluate((patternSource) => {
+          const re = new RegExp(patternSource, "i");
+          const all = [...document.querySelectorAll('[role="menuitem"], [role="option"], [role="menu"] *, [role="listbox"] *')];
+          const el = all.find((e) => {
+            const t = (e.textContent || "").trim();
+            return t && t.length < 40 && re.test(t);
+          });
+          if (el) el.click();
+        }, expectedIndicatorPattern.source);
+        await page.waitForTimeout(1500);
+      } catch {}
+    }
+    const indicator = await page.waitForSelector(activeIndicatorSelector, { timeout: timeoutMs }).catch(() => null);
+    if (!indicator) return { confirmed: false, reason: "indicator_not_found", descriptor };
+    const text = await readControlText(indicator);
+    lastSeen = text || "";
+    if (text && expectedIndicatorPattern.test(text)) return { confirmed: true, descriptor };
+    // Menu may have closed without selecting — reopen on the next attempt.
+    await page.waitForTimeout(1000);
   }
-  const indicator = await page.waitForSelector(activeIndicatorSelector, { timeout: timeoutMs }).catch(() => null);
-  if (!indicator) return { confirmed: false, reason: "indicator_not_found", descriptor };
-  const text = await readControlText(indicator);
-  return text && expectedIndicatorPattern.test(text)
-    ? { confirmed: true, descriptor }
-    : { confirmed: false, reason: "indicator_mismatch", descriptor };
+  return { confirmed: false, reason: "indicator_mismatch", descriptor, indicatorText: lastSeen };
 }
 
 async function confirmModelMode(page, model, timeoutMs) {
@@ -555,13 +568,14 @@ export class GeminiWebExecutor extends BaseExecutor {
       const getQuotaError = await openGeminiApp(page);
       if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : Error("Request aborted");
       await waitForComposer(page, getQuotaError);
+      await page.waitForTimeout(2000); // let the mode controls hydrate
       if (model) {
         const switched = await confirmModelMode(page, requestedModel, 5000);
         if (!switched.confirmed) {
           log?.warn?.("GEMINI-WEB", `Rejected request: could not confirm Gemini UI mode for "${requestedModel}" (${switched.reason})`);
           return {
             response: errorResponse(400, {
-              message: unsupportedControlMessage(requestedModel, switched.reason),
+              message: unsupportedControlMessage(requestedModel, switched.reason) + (switched.indicatorText ? ` [indicator read: "${switched.indicatorText}"]` : ""),
               type: "invalid_request_error",
               code: UNSUPPORTED_CONTROL_CODE,
             }),
