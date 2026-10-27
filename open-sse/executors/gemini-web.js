@@ -4,6 +4,7 @@
 // ships verbatim from the upstream package.
 
 import { BaseExecutor } from "./base.js";
+import { buildToolAdvert, buildBridgeResult } from "./gemini-web/toolBridge.js";
 import { PROVIDERS } from "../config/providers.js";
 import { SSE_DONE, SSE_HEADERS_NO_BUFFER } from "../utils/sseConstants.js";
 import { normalizeCookieInput, toPlaywrightCookies } from "../utils/webCookieString.js";
@@ -325,6 +326,12 @@ async function acquireSession(cookieHeader) {
 }
 
 function buildNonStreamResponse(content, model, finishReason = "stop") {
+  const bridged = buildBridgeResult(content);
+  const message = { role: "assistant", content: bridged.kind === "content" ? bridged.content : bridged.content || null };
+  if (bridged.kind === "tool_calls") {
+    message.tool_calls = bridged.toolCalls;
+    finishReason = "tool_calls";
+  }
   return {
     id: `chatcmpl-${Date.now()}`,
     object: "chat.completion",
@@ -333,7 +340,7 @@ function buildNonStreamResponse(content, model, finishReason = "stop") {
     choices: [
       {
         index: 0,
-        message: { role: "assistant", content },
+        message,
         finish_reason: finishReason,
         logprobs: null,
       },
@@ -462,7 +469,7 @@ function extractGeminiCookies(credentials) {
 }
 
 // Flatten an OpenAI messages array into one prompt the web composer can take.
-function flattenMessages(messages) {
+function flattenMessages(messages, toolAdvert = "") {
   const usable = messages.filter((m) => typeof m.content === "string" && m.content.trim().length > 0);
   const userMessages = usable.filter((m) => m.role === "user");
   const lastUser = userMessages[userMessages.length - 1];
@@ -473,10 +480,11 @@ function flattenMessages(messages) {
     .filter((m) => m.role === "system")
     .map((m) => m.content)
     .join("\n\n");
-  if (history.length === 0 && !system) return lastContent;
-  if (history.length === 0) return `System:\n${system}\n\n${lastContent}`;
+  const systemAll = [toolAdvert, system].filter(Boolean).join("\n\n");
+  if (history.length === 0 && !systemAll) return lastContent;
+  if (history.length === 0) return `System:\n${systemAll}\n\n${lastContent}`;
   const parts = [];
-  if (system) parts.push(`System:\n${system}`);
+  if (systemAll) parts.push(`System:\n${systemAll}`);
   parts.push(`Previous conversation:\n${history.map((m) => `${m.role === "assistant" ? "Assistant" : "User"}: ${m.content}`).join("\n\n")}`);
   parts.push(`Current user message:\n${lastContent}`);
   return parts.join("\n\n");
@@ -545,20 +553,25 @@ export class GeminiWebExecutor extends BaseExecutor {
     // always send them, and a hard 400 makes the provider unusable there. The
     // web UI cannot produce tool_calls — responses stay plain text.
     const toolCount = Array.isArray(input.tools) ? input.tools.length : input.tools ? 1 : 0;
-    const legacyCount = Array.isArray(input.functions) ? input.functions.length : input.functions ? 1 : 0;
-    if (toolCount > 0 || legacyCount > 0) {
+    void 0; // legacy tools fold into toolDefs below
+    // Tools are bridged over text: definitions get advertised in a protocol
+    // block, the model answers with a ```tool_call``` fence, and the reply is
+    // parsed back into native tool_calls (see gemini-web/toolBridge.js).
+    const toolDefs = Array.isArray(input.tools) ? input.tools : Array.isArray(input.functions) ? input.functions : [];
+    if (toolCount > 0 && toolDefs.length === 0) {
+      // Malformed shapes we can't advertise — drop rather than confuse the model.
       delete input.tools;
       delete input.functions;
       delete input.tool_choice;
-      log?.warn?.("GEMINI-WEB", `Stripped ${toolCount + legacyCount} tool definition(s) — the web UI cannot execute tools`);
     }
+    const toolAdvert = buildToolAdvert(toolDefs);
     const rawEffort = typeof input.reasoning_effort === "string" && input.reasoning_effort.trim().length > 0 ? input.reasoning_effort.trim().toLowerCase() : null;
     const wantsThinking = rawEffort !== null && !NO_THINKING_EFFORTS.has(rawEffort);
     const cookieHeader = extractGeminiCookies(credentials);
     if (!cookieHeader && !cdpEndpoint()) {
       return { response: errorResponse(401, "Missing Gemini cookies (or set GEMINI_WEB_CDP_ENDPOINT to attach to a logged-in Chrome)"), url: GEMINI_APP_URL, headers: {}, transformedBody: body };
     }
-    const prompt = flattenMessages(input.messages || []);
+    const prompt = flattenMessages(input.messages || [], toolAdvert);
     const hasUserMessage = (input.messages || []).some(
       (m) => m.role === "user" && typeof m.content === "string" && m.content.trim().length > 0
     );
@@ -641,8 +654,24 @@ export class GeminiWebExecutor extends BaseExecutor {
                   baseText: baseState.lastText,
                   signal,
                 });
-                controller.enqueue(encoder.encode(`data: ${JSON.stringify(buildStreamChunk(text, requestedModel))}\n\n`));
-                controller.enqueue(encoder.encode(`data: ${JSON.stringify(buildStreamChunk("", requestedModel, "stop"))}\n\n`));
+                // Bridge tool_call fences into native tool_calls deltas.
+                const bridged = buildBridgeResult(text);
+                if (bridged.kind === "tool_calls") {
+                  if (bridged.content) {
+                    controller.enqueue(encoder.encode(`data: ${JSON.stringify(buildStreamChunk(bridged.content, requestedModel))}\n\n`));
+                  }
+                  for (const call of bridged.toolCalls) {
+                    controller.enqueue(
+                      encoder.encode(
+                        `data: ${JSON.stringify({ ...buildStreamChunk("", requestedModel), choices: [{ index: 0, delta: { tool_calls: [call] }, finish_reason: null }] })}\n\n`
+                      )
+                    );
+                  }
+                  controller.enqueue(encoder.encode(`data: ${JSON.stringify(buildStreamChunk("", requestedModel, "tool_calls"))}\n\n`));
+                } else {
+                  controller.enqueue(encoder.encode(`data: ${JSON.stringify(buildStreamChunk(bridged.content, requestedModel))}\n\n`));
+                  controller.enqueue(encoder.encode(`data: ${JSON.stringify(buildStreamChunk("", requestedModel, "stop"))}\n\n`));
+                }
                 controller.enqueue(encoder.encode(SSE_DONE));
                 controller.close();
               } catch (err) {
