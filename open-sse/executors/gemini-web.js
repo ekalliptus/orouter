@@ -75,12 +75,20 @@ async function confirmControl(page, descriptor, timeoutMs = 5000) {
   if (!toggleSelector || !activeIndicatorSelector || !expectedIndicatorPattern) {
     return { confirmed: false, reason: "control_not_found", descriptor };
   }
-  // Retry the open-menu → select-item → verify cycle: the menu sometimes
-  // renders after the first toggle click (fresh chats hydrate late).
+  // Retry the open-menu → select-item → verify cycle. Two late-hydration
+  // cases: the mode button itself can take >10s to appear on a fresh page
+  // (needs composer focus), and the menu sometimes renders after the first
+  // toggle click.
   let lastSeen = "";
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < 4; attempt++) {
     const toggle = await page.waitForSelector(toggleSelector, { timeout: timeoutMs }).catch(() => null);
-    if (!toggle) return { confirmed: false, reason: "control_not_found", descriptor };
+    if (!toggle) {
+      if (attempt < 3) {
+        await page.waitForTimeout(3000);
+        continue;
+      }
+      return { confirmed: false, reason: "control_not_found", descriptor };
+    }
     await toggle.click();
     await page.waitForTimeout(900);
     // Model menus list selectable items; extended-thinking is a plain toggle.
@@ -151,12 +159,12 @@ async function readChatState(page) {
   }
 }
 
-// Poll the DOM until the reply settles, emitting content deltas as they grow.
-// firstTokenMs is generous: argon at High thinking took ~24s to first token
-// in testing, and heavier prompts can think longer.
-async function pollTextReply({ page, baseCount = 0, baseText = "", timeoutMs = 180000, firstTokenMs = 90000, signal, onDelta }) {
+// Poll the DOM until the reply settles. Deliberately does NOT stream
+// incremental deltas: Gemini's UI re-renders markdown in bursts and rewrites
+// text (thinking summaries collapse, citation blocks pop in), so slicing the
+// growing text produces duplicated/garbled deltas. One settled chunk instead.
+async function pollTextReply({ page, baseCount = 0, baseText = "", timeoutMs = 180000, firstTokenMs = 90000, signal }) {
   const startedAt = Date.now();
-  let emitted = "";
   let lastSeen = "";
   let stableCount = 0;
   let gotFirst = false;
@@ -176,15 +184,9 @@ async function pollTextReply({ page, baseCount = 0, baseText = "", timeoutMs = 1
       } else {
         stableCount += 1;
       }
-      if (!state.generating && text !== emitted) {
-        const delta = text.startsWith(emitted) ? text.slice(emitted.length) : text;
-        if (delta) {
-          emitted = text;
-          onDelta?.(delta);
-        }
-      }
-      if (stableCount >= 20) return emitted || text;
-      if (!state.generating && stableCount >= 5 && text === emitted) return emitted;
+      // Deliberately no onDelta emission: callers get the settled text once.
+      if (stableCount >= 20) return text;
+      if (!state.generating && stableCount >= 5) return text;
     }
   }
 }
@@ -299,7 +301,16 @@ async function acquireSession(cookieHeader) {
   if (endpoint) {
     const { chromium } = await lazyImport("playwright-core");
     const browser = await chromium.connectOverCDP(endpoint);
-    const context = browser.contexts()[0] || (await browser.newContext({ userAgent: GEMINI_WEB_UA }));
+    let context = browser.contexts()[0];
+    if (!context) {
+      // Chrome can run with zero open windows — playwright then has no default
+      // context, and context management commands are rejected over CDP. Create
+      // a tab via the DevTools HTTP endpoint instead, which spawns one.
+      await fetch(`${endpoint.replace(/\/$/, "")}/json/new?about:blank`, { method: "PUT" }).catch(() => {});
+      await delay(800);
+      context = browser.contexts()[0];
+    }
+    if (!context) throw Error("CDP target has no default browser context — reopen the debug Chrome window (start-chrome-gweb.ps1)");
     const page = await context.newPage();
     return { browser, context, page, owned: false };
   }
@@ -621,15 +632,16 @@ export class GeminiWebExecutor extends BaseExecutor {
           {
             async start(controller) {
               try {
-                await pollTextReply({
+                // Single settled chunk: polling waits for the reply to finish,
+                // then the full text is emitted once (clean output — no
+                // duplicated/garbled incremental deltas from UI re-renders).
+                const text = await pollTextReply({
                   page: pageRef,
                   baseCount: baseState.count,
                   baseText: baseState.lastText,
                   signal,
-                  onDelta: (delta) => {
-                    controller.enqueue(encoder.encode(`data: ${JSON.stringify(buildStreamChunk(delta, requestedModel))}\n\n`));
-                  },
                 });
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify(buildStreamChunk(text, requestedModel))}\n\n`));
                 controller.enqueue(encoder.encode(`data: ${JSON.stringify(buildStreamChunk("", requestedModel, "stop"))}\n\n`));
                 controller.enqueue(encoder.encode(SSE_DONE));
                 controller.close();
