@@ -37,7 +37,11 @@ Sub LaunchServer()
     shell.Run cmd, 0, False
 End Sub
 
-LogLine "watchdog started (pid " & GetObject("winmgmts:root\cimv2:Win32_Process=@").ProcessId & ")"
+' Log startup without a PID lookup: the old WMI "Win32_Process=@" singleton
+' moniker is an invalid object path (0x8004103A) — Win32_Process has no
+' singleton — and the blocking error dialog killed the watchdog before it
+' could start the server.
+LogLine "watchdog started"
 
 Do While True
     If ServerAlive() Then
