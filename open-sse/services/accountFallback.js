@@ -160,6 +160,77 @@ export function buildClearModelLocksUpdate(connection) {
   return cleared;
 }
 
+// ─── Model capability cache (per connection, per model) ─────────────────────
+// A 404 "entity not found" for a specific model means the account is not
+// entitled to it — a durable fact, unlike a rate-limit cooldown. Recording it
+// lets the account picker skip proven-unsupported accounts and prefer
+// proven-supported ones, instead of re-probing every account sequentially
+// (each 404 costs a full upstream round trip).
+
+export const MODEL_CAPABILITY_FIELD = "modelCapabilities";
+export const MODEL_CAPABILITY_NEGATIVE_TTL_MS = 6 * 60 * 60 * 1000; // 6h
+export const MODEL_CAPABILITY_POSITIVE_TTL_MS = 6 * 60 * 60 * 1000; // 6h
+
+function pruneCapabilities(caps, now = Date.now()) {
+  const pruned = {};
+  for (const [model, entry] of Object.entries(caps || {})) {
+    if (!entry || typeof entry !== "object") continue;
+    const negUntil = entry.u ? new Date(entry.u).getTime() : 0;
+    const posUntil = entry.s ? new Date(entry.s).getTime() : 0;
+    if ((entry.u && negUntil > now) || (entry.s && posUntil > now)) {
+      pruned[model] = entry;
+    }
+  }
+  return pruned;
+}
+
+function isCapabilityFresh(expiry, now = Date.now()) {
+  if (!expiry) return false;
+  const t = new Date(expiry).getTime();
+  return t > now;
+}
+
+/**
+ * Build an update that merges a capability observation for provider+model
+ * into `connection.modelCapabilities`.
+ * @param {object|null} connection - current connection record (has modelCapabilities)
+ * @param {string|null} model - model name (no provider prefix)
+ * @param {"supported"|"unsupported"} kind
+ * @returns {object|null} update object `{ modelCapabilities: {...} }` or null
+ *   when nothing should be recorded (no model, or an identical fresh mark).
+ */
+export function buildModelCapabilityUpdate(connection, model, kind) {
+  if (!model) return null;
+  const now = Date.now();
+  const ttl = kind === "unsupported" ? MODEL_CAPABILITY_NEGATIVE_TTL_MS : MODEL_CAPABILITY_POSITIVE_TTL_MS;
+  const until = new Date(now + ttl).toISOString();
+  const field = kind === "unsupported" ? "u" : "s";
+  const caps = pruneCapabilities(connection?.[MODEL_CAPABILITY_FIELD], now);
+  const entry = caps[model] || {};
+  if (isCapabilityFresh(entry[field], now)) return null; // already marked fresh
+  entry[field] = until;
+  // A fresh observation of one kind supersedes a stale one of the opposite
+  // kind only when it is newer — keep whichever is fresher per kind.
+  caps[model] = entry;
+  return { [MODEL_CAPABILITY_FIELD]: caps };
+}
+
+/**
+ * Is this connection known-unsupported for the model (fresh negative mark)?
+ */
+export function isModelUnsupportedFresh(connection, model) {
+  const entry = connection?.[MODEL_CAPABILITY_FIELD]?.[model];
+  return !!entry && isCapabilityFresh(entry.u);
+}
+
+/**
+ * Has this connection recently succeeded with the model (fresh positive mark)?
+ */
+export function hasModelSupportedFresh(connection, model) {
+  const entry = connection?.[MODEL_CAPABILITY_FIELD]?.[model];
+  return !!entry && isCapabilityFresh(entry.s);
+}
+
 /**
  * Filter available accounts (not in cooldown)
  */

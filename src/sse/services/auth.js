@@ -1,7 +1,7 @@
 import { getProviderConnections, validateApiKey, updateProviderConnection, getSettings, getProxyPools, getApiKeyRow, bindDevice, isModelAllowed, getApiKeyTokensUsed } from "@/lib/localDb";
 import { parseApiKey } from "@/shared/utils/apiKey";
 import { resolveConnectionProxyConfig, pickProxyPoolId } from "@/lib/network/connectionProxy";
-import { formatRetryAfter, checkFallbackError, isModelLockActive, buildModelLockUpdate, getEarliestModelLockUntil } from "open-sse/services/accountFallback.js";
+import { formatRetryAfter, checkFallbackError, isModelLockActive, buildModelLockUpdate, getEarliestModelLockUntil, isModelUnsupportedFresh, hasModelSupportedFresh, buildModelCapabilityUpdate, MODEL_CAPABILITY_NEGATIVE_TTL_MS } from "open-sse/services/accountFallback.js";
 import { MAX_RATE_LIMIT_COOLDOWN_MS } from "open-sse/config/errorConfig.js";
 import { resolveProviderId, FREE_PROVIDERS } from "@/shared/constants/providers.js";
 import * as log from "../utils/logger.mjs";
@@ -77,12 +77,22 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       return null;
     }
 
-    // Filter out model-locked and excluded connections
-    const availableConnections = connections.filter(c => {
+    // Filter out model-locked and excluded connections. On top of that, skip
+    // connections whose capability cache says this model is not entitled
+    // (fresh 404 "entity not found" within the negative TTL). The capability
+    // skip is SOFT: if it would empty the pool, restore those connections and
+    // re-probe — entitlement may have changed, and one failed request is
+    // cheaper than a hard provider failure.
+    const lockFiltered = connections.filter(c => {
       if (excludeSet.has(c.id)) return false;
       if (isModelLockActive(c, model)) return false;
       return true;
     });
+    let availableConnections = lockFiltered.filter(c => !isModelUnsupportedFresh(c, model));
+    if (availableConnections.length === 0 && lockFiltered.length > 0) {
+      log.debug("AUTH", `${provider} | capability cache skipped all ${lockFiltered.length} candidates for ${model || "any"} — re-probing`);
+      availableConnections = lockFiltered;
+    }
 
     log.debug("AUTH", `${provider} | available: ${availableConnections.length}/${connections.length}`);
     connections.forEach(c => {
@@ -170,6 +180,13 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       }
     } else {
       // Default: fill-first (already sorted by priority in getProviderConnections)
+      // Prefer connections that recently succeeded with this model (fresh
+      // positive capability mark) — stable partition keeps priority order.
+      const proven = model ? availableConnections.filter(c => hasModelSupportedFresh(c, model)) : [];
+      if (proven.length > 0) {
+        const rest = availableConnections.filter(c => !proven.includes(c));
+        availableConnections = [...proven, ...rest];
+      }
       connection = availableConnections[0];
     }
 
@@ -244,8 +261,18 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
   const reason = typeof errorText === "string" ? errorText.slice(0, 100) : "Provider error";
   const lockUpdate = buildModelLockUpdate(githubResetAtMs ? null : model, cooldownMs);
 
+  // 404 "entity not found" for a specific model = the account is not entitled
+  // to it — a durable fact, not a transient failure. Record it in the
+  // capability cache (6h) so the account picker skips this account for the
+  // model instead of paying another full upstream round trip every cooldown.
+  let capabilityUpdate = null;
+  if (status === 404 && model && /not found/i.test(reason)) {
+    capabilityUpdate = buildModelCapabilityUpdate(conn, model, "unsupported");
+  }
+
   await updateProviderConnection(connectionId, {
     ...lockUpdate,
+    ...(capabilityUpdate || {}),
     testStatus: "unavailable",
     lastError: reason,
     errorCode: status,
@@ -277,6 +304,18 @@ export async function clearAccountError(connectionId, currentConnection, model =
   if (!connectionId || connectionId === "noauth") return;
   const conn = currentConnection._connection || currentConnection;
   const now = Date.now();
+
+  // Positive capability mark: this connection just succeeded with the model —
+  // recorded so the account picker prefers it on subsequent requests. Written
+  // before the early returns (a success is worth recording even on a clean
+  // account), and skipped when the fresh mark already covers it.
+  if (model) {
+    const capabilityUpdate = buildModelCapabilityUpdate(conn, model, "supported");
+    if (capabilityUpdate) {
+      await updateProviderConnection(connectionId, capabilityUpdate).catch(() => {});
+    }
+  }
+
   const allLockKeys = Object.keys(conn).filter(k => k.startsWith("modelLock_"));
 
   if (!conn.testStatus && !conn.lastError && allLockKeys.length === 0) return;
