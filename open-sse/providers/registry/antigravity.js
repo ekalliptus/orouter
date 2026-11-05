@@ -48,12 +48,15 @@ export default {
     clientSecret: "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",
   },
   models: [
-    // Gemini 4 Argon — single non-tiered wire id, confirmed via CLI-fingerprint
-    // discovery (2026-10-23; the IDE fingerprint never lists it). Entitlement-
-    // gated: free accounts see gemini-4-argon-disabled ("Unavailable — Ultra
-    // and paid Pro plan subscribers"), calls reject until an account upgrades.
-    // Requests must use ANTIGRAVITY_CLI_USER_AGENT (see executors/antigravity.js).
-    { id: "gemini-4-argon", name: "Gemini 4 Argon" },
+    // Gemini 4 Argon — ENTITLED tier wire ids confirmed 2026-10-27 via
+    // fetchAvailableModels on a Pro/Ultra account (zyoluxury): per-tier
+    // gemini-4-argon-{high,medium,low}, enabled with quota. Plain
+    // "gemini-4-argon" is NOT a wire id (removed — 404s). Requests must use
+    // ANTIGRAVITY_CLI_USER_AGENT (see executors/antigravity.js). Free
+    // accounts see only "gemini-4-argon-disabled" and 404 → modelLock skip.
+    { id: "gemini-4-argon-high", name: "Gemini 4 Argon (High)" },
+    { id: "gemini-4-argon-medium", name: "Gemini 4 Argon (Medium)" },
+    { id: "gemini-4-argon-low", name: "Gemini 4 Argon (Low)" },
     { id: "gemini-3.8-flash-high", name: "Gemini 3.8 Flash (High)", upstreamModelId: "gemini-3.8-flash-tiered(high)" },
     { id: "gemini-3.8-flash-medium", name: "Gemini 3.8 Flash (Medium)", upstreamModelId: "gemini-3.8-flash-tiered(medium)" },
     { id: "gemini-3.8-flash-low", name: "Gemini 3.8 Flash (Low)", upstreamModelId: "gemini-3.8-flash-tiered(low)" },
