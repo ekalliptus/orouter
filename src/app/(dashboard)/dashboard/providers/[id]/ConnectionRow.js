@@ -6,10 +6,26 @@ import PropTypes from "prop-types";
 import { Badge, Toggle, Tooltip } from "@/shared/components";
 import CooldownTimer from "./CooldownTimer";
 
-export default function ConnectionRow({ connection, proxyPools, isOAuth, isFirst, isLast, onMoveUp, onMoveDown, onToggleActive, onUpdateProxy, onEdit, onDelete, oneByOneStatus = null, autoPing = null }) {
+export default function ConnectionRow({ connection, supported = null, proxyPools, isOAuth, isFirst, isLast, onMoveUp, onMoveDown, onToggleActive, onUpdateProxy, onEdit, onDelete, oneByOneStatus = null, autoPing = null }) {
   const [showProxyDropdown, setShowProxyDropdown] = useState(false);
   const [updatingProxy, setUpdatingProxy] = useState(false);
   const proxyDropdownRef = useRef(null);
+
+  // Entitlement pills: derived from live fetchAvailableModels data (passed
+  // from the detail page). Two honest states per group — entitled (success)
+  // or not (muted). No pills render while data is loading or on fetch errors.
+  const entitlementPills = (() => {
+    const models = supported?.models;
+    if (!Array.isArray(models) || models.length === 0) return null;
+    const enabled = models.some((m) => m.enabled && /gemini-4-argon/.test(m.id));
+    const argonSeen = models.some((m) => /gemini-4-argon/.test(m.id));
+    const claude55 = models.some((m) => m.enabled && /claude-(opus|sonnet)-5-5/.test(m.id));
+    const claude55Seen = models.some((m) => /claude-(opus|sonnet)-5-5/.test(m.id));
+    const pills = [];
+    if (argonSeen) pills.push({ label: "Argon", entitled: enabled });
+    if (claude55Seen) pills.push({ label: "Claude 5.5", entitled: claude55 });
+    return pills.length ? pills : null;
+  })();
 
   const proxyPoolMap = new Map((proxyPools || []).map((pool) => [pool.id, pool]));
   const boundProxyPoolId = connection.providerSpecificData?.proxyPoolId || null;
@@ -170,6 +186,17 @@ export default function ConnectionRow({ connection, proxyPools, isOAuth, isFirst
             <Badge variant="default" size="sm">
               {authLabel}
             </Badge>
+            {entitlementPills?.map((pill) => (
+              <Badge
+                key={pill.label}
+                variant={pill.entitled ? "success" : "default"}
+                size="sm"
+                dot={pill.entitled}
+                title={pill.entitled ? `${pill.label} aktif di akun ini (entitled)` : `${pill.label} tidak entitled di akun ini`}
+              >
+                {pill.label}
+              </Badge>
+            ))}
             {hasAnyProxy && (
               <Badge variant={proxyBadgeVariant} size="sm">
                 Proxy

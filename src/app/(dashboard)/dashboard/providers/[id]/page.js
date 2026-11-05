@@ -285,9 +285,26 @@ export default function ProviderDetailPage() {
   useEffect(() => {
     if (providerId !== "kilocode") return;
     fetch("/api/providers/kilo/free-models")
-      .then((res) => res.json())
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(res.status))))
       .then((data) => { if (data.models?.length) setKiloFreeModels(data.models); })
       .catch(() => {});
+  }, [providerId]);
+
+  // Antigravity: which models each account is entitled to (argon, Claude 5.5),
+  // reported live by Google's fetchAvailableModels. Failures stay silent —
+  // badges simply don't render.
+  const [supportedModels, setSupportedModels] = useState({});
+  useEffect(() => {
+    if (providerId !== "antigravity") return;
+    let cancelled = false;
+    fetch(`/api/providers/${providerId}/supported-models`, { cache: "no-store" })
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(res.status))))
+      .then((data) => {
+        if (cancelled) return;
+        setSupportedModels(Object.fromEntries((data.connections || []).map((c) => [c.id, c])));
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
   }, [providerId]);
 
   const fetchConnections = useCallback(async () => {
@@ -956,6 +973,7 @@ export default function ProviderDetailPage() {
             <div className="flex-1 min-w-0">
               <ConnectionRow
                 connection={conn}
+                supported={supportedModels[conn.id] || null}
                 proxyPools={proxyPools}
                 isOAuth={isOAuth}
                 isFirst={index === 0}
