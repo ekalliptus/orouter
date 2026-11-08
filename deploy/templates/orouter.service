@@ -4,7 +4,11 @@ After=network.target
 
 [Service]
 Type=simple
-User=ekalliptus
+User=ubuntu
+# NOTE: User must match the target box's SSH user. GCP box was "ekalliptus"
+# (metadata-managed key); the current elsaver box uses "ubuntu". If the
+# service fails with 217/USER ("Unknown user"), fix this line, then
+# `sudo systemctl daemon-reload && sudo systemctl restart orouter`.
 WorkingDirectory=/opt/orouter
 Environment=PORT=20128
 Environment=HOSTNAME=0.0.0.0
