@@ -364,10 +364,18 @@ export function parseQuotaData(provider, data) {
       case "antigravity":
         if (data.quotas) {
           const entries = Object.entries(data.quotas);
-          const geminiModels = entries.filter(([k]) => k.startsWith("gemini-") && !k.includes("image"));
+          const argonModels = entries.filter(([k]) => k.includes("argon") && !k.includes("disabled"));
+          const geminiModels = entries.filter(([k]) => k.startsWith("gemini-") && !k.includes("image") && !k.includes("argon"));
           const claudeModels = entries.filter(([k]) => k.startsWith("claude-"));
+          const gptOssModels = entries.filter(([k]) => k.startsWith("gpt-oss-"));
           const imageModels = entries.filter(([k]) => k.includes("image"));
-          const otherModels = entries.filter(([k]) => !k.startsWith("gemini-") && !k.startsWith("claude-") && !k.includes("image"));
+          const otherModels = entries.filter(([k]) => 
+            !k.startsWith("gemini-") && 
+            !k.startsWith("claude-") && 
+            !k.startsWith("gpt-oss-") && 
+            !k.includes("image") &&
+            !k.includes("argon")
+          );
 
           if (geminiModels.length > 0) {
             const minGemini = geminiModels.reduce((min, curr) =>
@@ -383,17 +391,33 @@ export function parseQuotaData(provider, data) {
             });
           }
 
-          if (claudeModels.length > 0) {
-            const minClaude = claudeModels.reduce((min, curr) =>
+          if (argonModels.length > 0) {
+            const minArgon = argonModels.reduce((min, curr) =>
               (curr[1].remainingPercentage ?? 100) < (min[1].remainingPercentage ?? 100) ? curr : min
             )[1];
             normalizedQuotas.push({
-              name: "Claude (Sonnet / Opus)",
-              modelKey: "claude",
-              used: minClaude.used || 0,
-              total: minClaude.total || 0,
-              resetAt: minClaude.resetAt || null,
-              remainingPercentage: minClaude.remainingPercentage,
+              name: "Gemini 4 Argon",
+              modelKey: "gemini-4-argon",
+              used: minArgon.used || 0,
+              total: minArgon.total || 0,
+              resetAt: minArgon.resetAt || null,
+              remainingPercentage: minArgon.remainingPercentage,
+            });
+          }
+
+          // Claude & GPT share the same pool in Antigravity IDE ("Claude and GPT models")
+          const claudeAndGpt = [...claudeModels, ...gptOssModels];
+          if (claudeAndGpt.length > 0) {
+            const minClaudeGpt = claudeAndGpt.reduce((min, curr) =>
+              (curr[1].remainingPercentage ?? 100) < (min[1].remainingPercentage ?? 100) ? curr : min
+            )[1];
+            normalizedQuotas.push({
+              name: "Claude and GPT models",
+              modelKey: "claude-gpt",
+              used: minClaudeGpt.used || 0,
+              total: minClaudeGpt.total || 0,
+              resetAt: minClaudeGpt.resetAt || null,
+              remainingPercentage: minClaudeGpt.remainingPercentage,
             });
           }
 

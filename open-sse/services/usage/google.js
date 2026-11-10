@@ -186,6 +186,12 @@ export async function getAntigravityUsage(accessToken, providerSpecificData, pro
         'gemini-3-flash',
         'claude-sonnet-4-6',
         'claude-opus-4-6-thinking',
+        'claude-sonnet-5-5-high',
+        'claude-sonnet-5-5-medium',
+        'claude-sonnet-5-5-low',
+        'claude-opus-5-5-high',
+        'claude-opus-5-5-medium',
+        'claude-opus-5-5-low',
         'gpt-oss-120b-medium',
         // Image generation models
         'gemini-3.1-flash-image',
