@@ -275,6 +275,23 @@ export class CodexExecutor extends BaseExecutor {
     while (true) {
       const result = await super.execute(args);
       const peek = await this._peekSseTransientError(result.response);
+
+      // Silent empty completion: upstream ended with no user-output items.
+      // Retry like a transient error — usually the next attempt produces
+      // real content — and surface the raw SSE tail in the final error.
+      if (peek.emptyCompletion) {
+        if (attempt >= attempts) {
+          args.log?.warn?.("RETRY", `CODEX | empty completion — retries exhausted (${attempt}/${attempts})`);
+          const tail = (peek.rawSse || "").replace(/\s+/g, " ").slice(0, 300);
+          result.response = codexSseErrorResponse(HTTP_STATUS.BAD_GATEWAY, `Upstream completed without any output. Raw tail: ${tail}`);
+          return result;
+        }
+        attempt++;
+        args.log?.warn?.("RETRY", `CODEX | empty completion → retry ${attempt}/${attempts} after ${delayMs / 1000}s`);
+        await new Promise(r => setTimeout(r, delayMs));
+        continue;
+      }
+
       if (!peek.matched) {
         // Replace body with re-assembled stream (prefix bytes already read + rest)
         if (peek.replacementBody) {
@@ -303,8 +320,10 @@ export class CodexExecutor extends BaseExecutor {
     }
   }
 
-  // Peek first N bytes of SSE body to detect upstream transient errors.
-  // Returns { matched: string|null, message: string|null, accountFallback: boolean, replacementBody: ReadableStream|null }.
+  // Peek first N bytes of SSE body to detect upstream transient errors AND
+  // silent empty completions (stream ends with no user-output items — seen on
+  // large agentic contexts; the model emits usage/reasoning but no message).
+  // Returns { matched, message, accountFallback, replacementBody, emptyCompletion, rawSse }.
   // Caller must use replacementBody when no error matched (original body has been read).
   async _peekSseTransientError(response) {
     if (!response || !response.ok || !response.body) return { matched: null, message: null, accountFallback: false, replacementBody: null };
@@ -314,10 +333,11 @@ export class CodexExecutor extends BaseExecutor {
     let text = "";
     let matched = null;
     let accountFallback = false;
+    let endedInPeek = false;
     try {
       while (text.length < CODEX_SSE_PEEK_BYTES) {
         const { done, value } = await reader.read();
-        if (done) break;
+        if (done) { endedInPeek = true; break; }
         chunks.push(value);
         text += decoder.decode(value, { stream: true });
         const lowerText = text.toLowerCase();
@@ -335,6 +355,14 @@ export class CodexExecutor extends BaseExecutor {
       try { await reader.cancel(); } catch { /* noop */ }
       try { reader.releaseLock(); } catch { /* noop */ }
       return { matched, message: extractSseErrorMessage(text, matched), accountFallback, replacementBody: null };
+    }
+
+    if (endedInPeek) {
+      // Stream ended without any user-output pattern: upstream completed with
+      // an empty message. Capture raw SSE for post-mortem and let the caller
+      // retry/convert this into an explicit error.
+      try { reader.releaseLock(); } catch { /* noop */ }
+      return { matched: null, message: null, accountFallback: false, replacementBody: null, emptyCompletion: true, rawSse: text };
     }
 
     reader.releaseLock();
