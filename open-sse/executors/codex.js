@@ -272,6 +272,8 @@ export class CodexExecutor extends BaseExecutor {
     const retryConfig = { ...DEFAULT_RETRY_CONFIG, ...this.config.retry };
     const { attempts, delayMs } = resolveRetryEntry(retryConfig[503]);
     let attempt = 0;
+    const retryDeadline = Date.now() + 120000; // bound total retry time — a hung
+    // retry attempt must not hold the client past its own turn timeout.
     while (true) {
       const result = await super.execute(args);
       const peek = await this._peekSseTransientError(result.response);
@@ -280,7 +282,7 @@ export class CodexExecutor extends BaseExecutor {
       // Retry like a transient error — usually the next attempt produces
       // real content — and surface the raw SSE tail in the final error.
       if (peek.emptyCompletion) {
-        if (attempt >= attempts) {
+        if (attempt >= attempts || Date.now() > retryDeadline) {
           args.log?.warn?.("RETRY", `CODEX | empty completion — retries exhausted (${attempt}/${attempts})`);
           const tail = (peek.rawSse || "").replace(/\s+/g, " ").slice(0, 300);
           result.response = codexSseErrorResponse(HTTP_STATUS.BAD_GATEWAY, `Upstream completed without any output. Raw tail: ${tail}`);
@@ -334,9 +336,18 @@ export class CodexExecutor extends BaseExecutor {
     let matched = null;
     let accountFallback = false;
     let endedInPeek = false;
+    // Per-read deadline: a stalled upstream holds reader.read() open forever
+    // (seen on ChatGPT backend when consecutive requests get throttled) —
+    // treat "no data for 30s" the same as a completed empty stream.
+    const READ_DEADLINE_MS = 30000;
     try {
       while (text.length < CODEX_SSE_PEEK_BYTES) {
-        const { done, value } = await reader.read();
+        const readResult = await Promise.race([
+          reader.read(),
+          new Promise((resolve) => setTimeout(() => resolve({ timedOut: true }), READ_DEADLINE_MS)),
+        ]);
+        if (readResult.timedOut) { endedInPeek = true; break; }
+        const { done, value } = readResult;
         if (done) { endedInPeek = true; break; }
         chunks.push(value);
         text += decoder.decode(value, { stream: true });
